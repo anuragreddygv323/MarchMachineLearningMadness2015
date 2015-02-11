@@ -32,3 +32,28 @@ tourneySlots <- fread(file.path(dataDirectory, "tourney_slots.csv"))
 
 #Write .csv
 sampleSubmission <- fread(file.path(dataDirectory, "sample_submission.csv"))
+
+#Data Mining (Functions)------------------------
+#Shuffle Wins and Losses
+ShuffleFun <- function(gamesIdx, shufIdxs){
+  if (shufIdxs[gamesIdx] == 1){
+    shuffledTeams <- c(tourneyCompact$wteam[gamesIdx], tourneyCompact$lteam[gamesIdx])
+  }else{
+    shuffledTeams <- c(tourneyCompact$lteam[gamesIdx], tourneyCompact$wteam[gamesIdx])
+  }  
+  return(shuffledTeams)
+}
+
+#String Generator for training data
+StringMaker <- function(seasonDate){
+  lastIdx <- min(which(tourneyCompact$season == seasonDate)) - 1
+  positionShuffles <- rbinom(lastIdx, 1, 0.5)
+  teamsGamesUnlisted <- unlist(mclapply(seq(1, lastIdx), ShuffleFun, mc.cores = numCores, shufIdxs = positionShuffles))
+  teamsShuffled <- signif(matrix(teamsGamesUnlisted, nrow = lastIdx, byrow = TRUE), digits = 3)
+  paste(tourneyCompact$season, tourneyCompact$wteam, sep = "_")
+}
+#Define function to be passed as parallel
+VectorMining <- function(gameString){
+  season, team1, team2
+  return(gameVector)
+}
