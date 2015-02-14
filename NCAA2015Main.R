@@ -1,5 +1,5 @@
 #March Machine Learning Madness
-#Ver 0.2 #Added Test & Train Matrix Creation + RF Cross Validation and 2011-2014 Modeling
+#Ver 0.3 #Added seed based benchmark
 
 #Init-----------------------------------------------
 rm(list=ls(all=TRUE))
@@ -50,21 +50,28 @@ getSeedDivision <- function(seasonFromData, teamFromData, trimmedSouce = FALSE){
   seedTeam <- gsub(pattern = "[A-Z+a-z]", replacement = "", x = seed)
   divisionTeam <- gsub(pattern = "[0-9]", replacement = "", x = seed)
   #clean the extra letters
-  divisionTeam <- gsub(pattern = "[a-z]", replacement = "", x = divisionTeam)
+  divisionTeam <- gsub(pattern = "[a-z]", replacement = "", x = divisionTeam)  
+  
   return(c(seedTeam, divisionTeam))
 }
 
 #Shuffle Winning teams with its corresponding features
 makeTrainTable <- function(gamesIdx, shufIdxs){
   wTeamSeed <- getSeedDivision(tourneyCompact$season[gamesIdx], tourneyCompact$wteam[gamesIdx])
-  lTeamSeed <- getSeedDivision(tourneyCompact$season[gamesIdx], tourneyCompact$lteam[gamesIdx])
+  lTeamSeed <- getSeedDivision(tourneyCompact$season[gamesIdx], tourneyCompact$lteam[gamesIdx]) 
   
   if (shufIdxs[gamesIdx] == 1){    
+    #Seed Based Benchmark
+    seedBasedBenchmark <- 0.5 + (as.numeric(lTeamSeed[1]) - as.numeric(wTeamSeed[1])) * 0.03
+    
     shuffledTeams <- c(tourneyCompact$wteam[gamesIdx], tourneyCompact$lteam[gamesIdx], 
-                       wTeamSeed, lTeamSeed)
+                       wTeamSeed, lTeamSeed, seedBasedBenchmark)
   }else{
+    #Seed Based Benchmark
+    seedBasedBenchmark <- 0.5 + (as.numeric(wTeamSeed[1]) - as.numeric(lTeamSeed[1])) * 0.03
+    
     shuffledTeams <- c(tourneyCompact$lteam[gamesIdx], tourneyCompact$wteam[gamesIdx], 
-                       lTeamSeed, wTeamSeed)
+                       lTeamSeed, wTeamSeed, seedBasedBenchmark)
   }  
   return(shuffledTeams)
 }
@@ -74,9 +81,13 @@ makeTestTable <- function(testIdx, team1Vector, team2Vector, season){
   #Get seeds from both teams
   team1Seed <- getSeedDivision(season, team1Vector[testIdx])
   team2Seed <- getSeedDivision(season, team2Vector[testIdx])
+  
+  #Seed Based Benchmark
+  seedBasedBenchmark <- 0.5 + (as.numeric(team2Seed[1]) - as.numeric(team1Seed[1])) * 0.03
+  
   #Make a vector containing the features
   matchTeams <- c(team1Vector[testIdx], team2Vector[testIdx], 
-                  team1Seed, team2Seed)
+                  team1Seed, team2Seed, seedBasedBenchmark)
   
   return(matchTeams)
 }
@@ -88,7 +99,7 @@ seasonDate <- 2011
 lastIdx <- min(which(tourneyCompact$season == seasonDate)) - 1
 positionShuffles <- rbinom(lastIdx, 1, 0.5)
 teamsGamesUnlisted <- unlist(mclapply(seq(1, lastIdx), makeTrainTable, mc.cores = numCores, shufIdxs = positionShuffles))
-teamsShuffledMatrix2010 <- cbind(matrix(teamsGamesUnlisted, nrow = lastIdx, byrow = TRUE), positionShuffles)
+teamsShuffledMatrix2010 <- as.data.table(cbind(matrix(teamsGamesUnlisted, nrow = lastIdx, byrow = TRUE), positionShuffles))
 
 #Test Data; 2011 Season
 seasonDate <- 2011
@@ -99,7 +110,7 @@ teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
 teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
                                           team1Vector = teams1, team2Vector = teams2,
                                           season = seasonDate))
-teamsTestMatrix2011 <- matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE)
+teamsTestMatrix2011 <- as.data.table(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE))
 
 #h2o Init
 #Start h2o directly from R
@@ -145,7 +156,7 @@ seasonDate <- 2012
 lastIdx <- min(which(tourneyCompact$season == seasonDate)) - 1
 positionShuffles <- rbinom(lastIdx, 1, 0.5)
 teamsGamesUnlisted <- unlist(mclapply(seq(1, lastIdx), makeTrainTable, mc.cores = numCores, shufIdxs = positionShuffles))
-teamsShuffledMatrix2011 <- cbind(matrix(teamsGamesUnlisted, nrow = lastIdx, byrow = TRUE), positionShuffles)
+teamsShuffledMatrix2011 <- as.data.table(cbind(matrix(teamsGamesUnlisted, nrow = lastIdx, byrow = TRUE), positionShuffles))
 
 #Test Data; 2012 Season
 seasonDate <- 2012
@@ -156,7 +167,7 @@ teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
 teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
                                           team1Vector = teams1, team2Vector = teams2,
                                           season = seasonDate))
-teamsTestMatrix2012 <- matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE)
+teamsTestMatrix2012 <- as.data.table(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE))
 
 #h2o Init
 #Start h2o directly from R
@@ -202,7 +213,7 @@ seasonDate <- 2013
 lastIdx <- min(which(tourneyCompact$season == seasonDate)) - 1
 positionShuffles <- rbinom(lastIdx, 1, 0.5)
 teamsGamesUnlisted <- unlist(mclapply(seq(1, lastIdx), makeTrainTable, mc.cores = numCores, shufIdxs = positionShuffles))
-teamsShuffledMatrix2012 <- cbind(matrix(teamsGamesUnlisted, nrow = lastIdx, byrow = TRUE), positionShuffles)
+teamsShuffledMatrix2012 <- as.data.table(cbind(matrix(teamsGamesUnlisted, nrow = lastIdx, byrow = TRUE), positionShuffles))
 
 #Test Data; 2013 Season
 seasonDate <- 2013
@@ -213,7 +224,7 @@ teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
 teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
                                           team1Vector = teams1, team2Vector = teams2,
                                           season = seasonDate))
-teamsTestMatrix2013 <- matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE)
+teamsTestMatrix2013 <- as.data.table(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE))
 
 #h2o Init
 #Start h2o directly from R
@@ -259,7 +270,7 @@ seasonDate <- 2014
 lastIdx <- min(which(tourneyCompact$season == seasonDate)) - 1
 positionShuffles <- rbinom(lastIdx, 1, 0.5)
 teamsGamesUnlisted <- unlist(mclapply(seq(1, lastIdx), makeTrainTable, mc.cores = numCores, shufIdxs = positionShuffles))
-teamsShuffledMatrix2013 <- cbind(matrix(teamsGamesUnlisted, nrow = lastIdx, byrow = TRUE), positionShuffles)
+teamsShuffledMatrix2013 <- as.data.table(cbind(matrix(teamsGamesUnlisted, nrow = lastIdx, byrow = TRUE), positionShuffles))
 
 #Test Data; 2013 Season
 seasonDate <- 2014
@@ -270,7 +281,7 @@ teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
 teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
                                           team1Vector = teams1, team2Vector = teams2,
                                           season = seasonDate))
-teamsTestMatrix2014 <- matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE)
+teamsTestMatrix2014 <- as.data.table(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE))
 
 #h2o Init
 #Start h2o directly from R
@@ -315,12 +326,12 @@ sampleSubmission$pred <- c(NCAA2011RFPrediction[, 1],
                            NCAA2012RFPrediction[, 1],
                            NCAA2013RFPrediction[, 1], 
                            NCAA2014RFPrediction[, 1])
-write.csv(sampleSubmission, file = "RFI.csv", row.names = FALSE)
-system('zip RFI.csv.zip RFI.csv.csv')
+write.csv(sampleSubmission, file = "RFII.csv", row.names = FALSE)
+system('zip RFII.zip RFII.csv')
 
 #Evaluate the models against the known results
 
-#March Machine Learning Madness 2015------------------------
+#MARCH MACHINE LEARNING 2015------------------------
 #TODO
 
 #Make a Kaggle Submission file with the predictions
