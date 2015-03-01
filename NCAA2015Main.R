@@ -1,5 +1,5 @@
 #March Machine Learning Madness
-#Ver 0.5 #Massey Ordinal Rankings with NAs were removed
+#Ver 0.6 #Margin of Victory (MOV) prediction, fixed factor to numeric bug
 
 #Init-----------------------------------------------
 rm(list=ls(all=TRUE))
@@ -7,9 +7,7 @@ rm(list=ls(all=TRUE))
 #Libraries, directories, options and extra functions----------------------
 require("parallel")
 require("data.table")
-require("caret")
-require("gbm")
-#require("h2o")
+require("h2o")
 
 #Set Working Directory
 workingDirectory <- "/home/wacax/Wacax/Kaggle/March-Machine-Learning-Madness-2015/"
@@ -41,7 +39,7 @@ sampleSubmission <- fread(file.path(dataDirectory, "sample_submission.csv"))
 
 #Data Mining (Functions)------------------------
 #Seed & Division 
-getSeedDivision <- function(seasonFromData, teamFromData, trimmedSouce = FALSE){
+getSeedDivision <- function(seasonFromData, teamFromData, trimmedSouce = TRUE){
   #Reduce the search space 
   if (trimmedSouce == TRUE){
     #Only data from 2003
@@ -75,28 +73,30 @@ getExtraRankings <- function(seasonMatch, teamMatch){
   return(extraRankingsTeam)
 }
 
-#Shuffle Winning teams with its corresponding features
-makeTrainTable <- function(gamesIdx, shufIdxs, minIndex = 0){
+#Shuffle Winning teams with their corresponding features
+makeTrainTable <- function(gamesIdx, shufIdxs, returnPointspread = TRUE){
   wTeamSeed <- getSeedDivision(tourneyCompact$season[gamesIdx], tourneyCompact$wteam[gamesIdx])
   lTeamSeed <- getSeedDivision(tourneyCompact$season[gamesIdx], tourneyCompact$lteam[gamesIdx]) 
   #Ordinal Ranks
   wTeamOrdinalRanks <- getExtraRankings(tourneyCompact$season[gamesIdx], tourneyCompact$wteam[gamesIdx])[1:33]
   lTeamOrdinalRanks <- getExtraRankings(tourneyCompact$season[gamesIdx], tourneyCompact$lteam[gamesIdx])[1:33]
   #Predicted Pointspreads
-  pointspreads <-  100 - 4 * log(wTeamOrdinalRanks + 1) - lTeamOrdinalRanks / 22
+  predictedPointspreads <-  100 - 4 * log(wTeamOrdinalRanks + 1) - lTeamOrdinalRanks / 22
     
-  if (shufIdxs[gamesIdx - minIndex + 1] == 1){    
+  if (shufIdxs[gamesIdx] == 1){    
     #Seed Based Benchmark
     seedBasedBenchmark <- 0.5 + (as.numeric(lTeamSeed[1]) - as.numeric(wTeamSeed[1])) * 0.03
     
     shuffledTeams <- c(tourneyCompact$wteam[gamesIdx], tourneyCompact$lteam[gamesIdx], 
-                       wTeamSeed, lTeamSeed, seedBasedBenchmark, wTeamOrdinalRanks, lTeamOrdinalRanks)
+                       wTeamSeed, lTeamSeed, seedBasedBenchmark, wTeamOrdinalRanks, lTeamOrdinalRanks,
+                       (tourneyCompact$wscore[gamesIdx] - tourneyCompact$lscore[gamesIdx]))
   }else{
     #Seed Based Benchmark
     seedBasedBenchmark <- 0.5 + (as.numeric(wTeamSeed[1]) - as.numeric(lTeamSeed[1])) * 0.03
     
     shuffledTeams <- c(tourneyCompact$lteam[gamesIdx], tourneyCompact$wteam[gamesIdx], 
-                       lTeamSeed, wTeamSeed, seedBasedBenchmark, lTeamOrdinalRanks, wTeamOrdinalRanks)
+                       lTeamSeed, wTeamSeed, seedBasedBenchmark, lTeamOrdinalRanks, wTeamOrdinalRanks,
+                       (tourneyCompact$lscore[gamesIdx] - tourneyCompact$wscore[gamesIdx]))
   }  
   return(shuffledTeams)
 }
@@ -109,7 +109,7 @@ makeTestTable <- function(testIdx, team1Vector, team2Vector, season){
   team1OrdinalRanks <- getExtraRankings(season, team1Vector[testIdx])[1:33]
   team2OrdinalRanks <- getExtraRankings(season, team2Vector[testIdx])[1:33]
   #Predicted Pointspreads
-  pointspreads <-  100 - 4 * log(team1OrdinalRanks + 1) - team2OrdinalRanks / 22
+  #pointspreads <-  100 - 4 * log(team1OrdinalRanks + 1) - team2OrdinalRanks / 22
   
   #Seed Based Benchmark
   seedBasedBenchmark <- 0.5 + (as.numeric(team2Seed[1]) - as.numeric(team1Seed[1])) * 0.03
@@ -122,23 +122,17 @@ makeTestTable <- function(testIdx, team1Vector, team2Vector, season){
 }
 
 #EDA-------------------------------                  
+first2003Idx <- min(which(tourneyCompact$season == 2003)) 
+positionShuffles <- rbinom(nrow(tourneyCompact), 1, 0.5)
+
 #EDA 1; 2011 Season
 #Training Data 2003 - 2010
 seasonDate <- 2011
-first2003Idx <- min(which(tourneyCompact$season == 2003)) 
-
 lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
-positionShuffles <- rbinom(length(seq(first2003Idx, lastIdx)), 1, 0.5)
 teamsGamesUnlisted <- unlist(mclapply(seq(first2003Idx, lastIdx), makeTrainTable, mc.cores = numCores,
-                                      shufIdxs = positionShuffles, minIndex = first2003Idx))
-teamsShuffledMatrix2010 <- as.data.frame(cbind(matrix(teamsGamesUnlisted, nrow = length(positionShuffles), byrow = TRUE),
-                                               positionShuffles))
-
-#Numeric Columns
-numericColumnsTrain <- c(3, 5, 7:(ncol(teamsShuffledMatrix2010) - 1))
-
-#Transform character columns to numeric 
-teamsShuffledMatrix2010[, numericColumnsTrain] <- sapply(teamsShuffledMatrix2010[, numericColumnsTrain], as.numeric)
+                                      shufIdxs = positionShuffles))
+teamsShuffledMatrix2010 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
+                                         stringsAsFactors = FALSE)
 
 validColTrain <- sapply(names(teamsShuffledMatrix2010)[-length(names(teamsShuffledMatrix2010))], function(nam){
   return(sum(is.na(teamsShuffledMatrix2010[, nam])))
@@ -153,13 +147,8 @@ teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
 teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
                                           team1Vector = teams1, team2Vector = teams2,
                                           season = seasonDate))
-teamsTestMatrix2011 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE))
-
-#Numeric Columns
-numericColumnsTest <- c(3, 5, 7:ncol(teamsTestMatrix2011))
-
-#Transform character columns to numeric 
-teamsTestMatrix2011[, numericColumnsTest] <- sapply(teamsTestMatrix2011[, numericColumnsTest], as.numeric)
+teamsTestMatrix2011 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE), 
+                                     stringsAsFactors = FALSE)
 
 validColTest <- sapply(names(teamsTestMatrix2011), function(nam){
   return(sum(is.na(teamsTestMatrix2011[, nam])))
@@ -187,7 +176,9 @@ rm(teamsShuffledMatrix2010, teamsTestMatrix2011)
 NCAA2011RFModelCV <- h2o.randomForest(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol(h2oTrain2011),
                                       data = h2oTrain2011,
                                       nfolds = 5,
-                                      classification = TRUE,
+                                      #classification = TRUE,
+                                      classification = FALSE,
+                                      type = "BigData",                                      
                                       ntree = c(50, 75, 100),
                                       depth = c(20, 50, 75), 
                                       verbose = TRUE)
@@ -197,14 +188,15 @@ print(paste0("There is an AUC error of: ", NCAA2011RFModelCV@model[[1]]@model$au
 #Model Training
 NCAA2011RFModel <- h2o.randomForest(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol(h2oTrain2011),
                                     data = h2oTrain2011,
-                                    classification = TRUE,
+                                    #classification = TRUE,
+                                    classification = FALSE,                                                                        
                                     type = "BigData",
                                     ntree = NCAA2011RFModelCV@model[[1]]@model$params$ntree,
                                     depth = NCAA2011RFModelCV@model[[1]]@model$params$depth, 
                                     verbose = TRUE)
 
 #probability Predictions on all 2011 NCAA Games
-NCAA2011RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2011RFModel, newdata = h2oTest2011)[, 3]), digits = 8)
+NCAA2011RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2011RFModel, newdata = h2oTest2011)), digits = 8)
 
 #Shutdown h20 instance
 h2o.shutdown(h2oServer, prompt = FALSE)
@@ -213,17 +205,10 @@ h2o.shutdown(h2oServer, prompt = FALSE)
 #Training Data 2003 - 2011
 seasonDate <- 2012
 lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
-positionShuffles <- rbinom(length(seq(first2003Idx, lastIdx)), 1, 0.5)
 teamsGamesUnlisted <- unlist(mclapply(seq(first2003Idx, lastIdx), makeTrainTable, mc.cores = numCores,
-                                      shufIdxs = positionShuffles, minIndex = first2003Idx))
-teamsShuffledMatrix2011 <- as.data.frame(cbind(matrix(teamsGamesUnlisted, nrow = length(positionShuffles), byrow = TRUE),
-                                               positionShuffles))
-
-#Numeric Columns
-numericColumnsTrain <- c(3, 5, 7:(ncol(teamsShuffledMatrix2011) - 1))
-
-#Transform character columns to numeric 
-teamsShuffledMatrix2011[, numericColumnsTrain] <- sapply(teamsShuffledMatrix2011[, numericColumnsTrain], as.numeric)
+                                      shufIdxs = positionShuffles))
+teamsShuffledMatrix2011 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
+                                         stringsAsFactors = FALSE)
 
 validColTrain <- sapply(names(teamsShuffledMatrix2011)[-length(names(teamsShuffledMatrix2011))], function(nam){
   return(sum(is.na(teamsShuffledMatrix2011[, nam])))
@@ -238,13 +223,8 @@ teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
 teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
                                           team1Vector = teams1, team2Vector = teams2,
                                           season = seasonDate))
-teamsTestMatrix2012 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE))
-
-#Numeric Columns
-numericColumnsTest <- c(3, 5, 7:ncol(teamsTestMatrix2012))
-
-#Transform character columns to numeric 
-teamsTestMatrix2012[, numericColumnsTest] <- sapply(teamsTestMatrix2012[, numericColumnsTest], as.numeric)
+teamsTestMatrix2012 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE), 
+                                     stringsAsFactors = FALSE)
 
 validColTest <- sapply(names(teamsTestMatrix2012), function(nam){
   return(sum(is.na(teamsTestMatrix2012[, nam])))
@@ -272,7 +252,9 @@ rm(teamsShuffledMatrix2011, teamsTestMatrix2012)
 NCAA2012RFModelCV <- h2o.randomForest(x = seq(3, ncol(h2oTrain2012) - 1), y = ncol(h2oTrain2012),
                                       data = h2oTrain2012,
                                       nfolds = 5,
-                                      classification = TRUE,
+                                      #classification = TRUE,
+                                      classification = FALSE,
+                                      type = "BigData",
                                       ntree = c(50, 75, 100),
                                       depth = c(20, 50, 75), 
                                       verbose = TRUE)
@@ -282,14 +264,15 @@ print(paste0("There is an AUC error of: ", NCAA2012RFModelCV@model[[1]]@model$au
 #Model Training
 NCAA2012RFModel <- h2o.randomForest(x = seq(3, ncol(h2oTrain2012) - 1), y = ncol(h2oTrain2012),
                                     data = h2oTrain2012,
-                                    classification = TRUE,
+                                    #classification = TRUE,
+                                    classification = FALSE,
                                     type = "BigData",
                                     ntree = NCAA2012RFModelCV@model[[1]]@model$params$ntree,
                                     depth = NCAA2012RFModelCV@model[[1]]@model$params$depth, 
                                     verbose = TRUE)
 
 #probability Predictions on all 2012 NCAA Games
-NCAA2012RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2012RFModel, newdata = h2oTest2012)[, 3]), digits = 8)
+NCAA2012RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2012RFModel, newdata = h2oTest2012)), digits = 8)
 
 #Shutdown h20 instance
 h2o.shutdown(h2oServer, prompt = FALSE)
@@ -298,17 +281,10 @@ h2o.shutdown(h2oServer, prompt = FALSE)
 #Training Data 2003 - 2012
 seasonDate <- 2013
 lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
-positionShuffles <- rbinom(length(seq(first2003Idx, lastIdx)), 1, 0.5)
 teamsGamesUnlisted <- unlist(mclapply(seq(first2003Idx, lastIdx), makeTrainTable, mc.cores = numCores,
-                                      shufIdxs = positionShuffles, minIndex = first2003Idx))
-teamsShuffledMatrix2012 <- as.data.frame(cbind(matrix(teamsGamesUnlisted, nrow = length(positionShuffles), byrow = TRUE),
-                                               positionShuffles))
-
-#Numeric Columns
-numericColumnsTrain <- c(3, 5, 7:(ncol(teamsShuffledMatrix2012) - 1))
-
-#Transform character columns to numeric 
-teamsShuffledMatrix2012[, numericColumnsTrain] <- sapply(teamsShuffledMatrix2012[, numericColumnsTrain], as.numeric)
+                                      shufIdxs = positionShuffles))
+teamsShuffledMatrix2012 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
+                                         stringsAsFactors = FALSE)
 
 validColTrain <- sapply(names(teamsShuffledMatrix2012)[-length(names(teamsShuffledMatrix2012))], function(nam){
   return(sum(is.na(teamsShuffledMatrix2012[, nam])))
@@ -323,13 +299,8 @@ teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
 teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
                                           team1Vector = teams1, team2Vector = teams2,
                                           season = seasonDate))
-teamsTestMatrix2013 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE))
-
-#Numeric Columns
-numericColumnsTest <- c(3, 5, 7:ncol(teamsTestMatrix2013))
-
-#Transform character columns to numeric 
-teamsTestMatrix2013[, numericColumnsTest] <- sapply(teamsTestMatrix2013[, numericColumnsTest], as.numeric)
+teamsTestMatrix2013 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE), 
+                                     stringsAsFactors = FALSE)
 
 validColTest <- sapply(names(teamsTestMatrix2013), function(nam){
   return(sum(is.na(teamsTestMatrix2013[, nam])))
@@ -357,7 +328,9 @@ rm(teamsShuffledMatrix2012, teamsTestMatrix2013)
 NCAA2013RFModelCV <- h2o.randomForest(x = seq(3, ncol(h2oTrain2013) - 1), y = ncol(h2oTrain2013),
                                       data = h2oTrain2013,
                                       nfolds = 5,
-                                      classification = TRUE,
+                                      #classification = TRUE,
+                                      classification = FALSE,
+                                      type = "BigData",                                                                            
                                       ntree = c(50, 75, 100),
                                       depth = c(20, 50, 75), 
                                       verbose = TRUE)
@@ -367,14 +340,15 @@ print(paste0("There is an AUC error of: ", NCAA2013RFModelCV@model[[1]]@model$au
 #Model Training
 NCAA2013RFModel <- h2o.randomForest(x = seq(3, ncol(h2oTrain2013) - 1), y = ncol(h2oTrain2013),
                                     data = h2oTrain2013,
-                                    classification = TRUE,
+                                    #classification = TRUE,
+                                    classification = FALSE,
                                     type = "BigData",
                                     ntree = NCAA2013RFModelCV@model[[1]]@model$params$ntree,
                                     depth = NCAA2013RFModelCV@model[[1]]@model$params$depth, 
                                     verbose = TRUE)
 
 #probability Predictions on all 2013 NCAA Games
-NCAA2013RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2013RFModel, newdata = h2oTest2013)[, 3]), digits = 8)
+NCAA2013RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2013RFModel, newdata = h2oTest2013)), digits = 8)
 
 #Shutdown h20 instance
 h2o.shutdown(h2oServer, prompt = FALSE)
@@ -383,17 +357,10 @@ h2o.shutdown(h2oServer, prompt = FALSE)
 #Training Data 2003 - 2013
 seasonDate <- 2014
 lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
-positionShuffles <- rbinom(length(seq(first2003Idx, lastIdx)), 1, 0.5)
 teamsGamesUnlisted <- unlist(mclapply(seq(first2003Idx, lastIdx), makeTrainTable, mc.cores = numCores,
-                                      shufIdxs = positionShuffles, minIndex = first2003Idx))
-teamsShuffledMatrix2013 <- as.data.frame(cbind(matrix(teamsGamesUnlisted, nrow = length(positionShuffles), byrow = TRUE),
-                                               positionShuffles))
-
-#Numeric Columns
-numericColumnsTrain <- c(3, 5, 7:(ncol(teamsShuffledMatrix2013) - 1))
-
-#Transform character columns to numeric 
-teamsShuffledMatrix2013[, numericColumnsTrain] <- sapply(teamsShuffledMatrix2013[, numericColumnsTrain], as.numeric)
+                                      shufIdxs = positionShuffles))
+teamsShuffledMatrix2013 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
+                                         stringsAsFactors = FALSE)
 
 validColTrain <- sapply(names(teamsShuffledMatrix2013)[-length(names(teamsShuffledMatrix2013))], function(nam){
   return(sum(is.na(teamsShuffledMatrix2013[, nam])))
@@ -408,13 +375,8 @@ teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
 teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
                                           team1Vector = teams1, team2Vector = teams2,
                                           season = seasonDate))
-teamsTestMatrix2014 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE))
-
-#Numeric Columns
-numericColumnsTest <- c(3, 5, 7:ncol(teamsTestMatrix2014))
-
-#Transform character columns to numeric 
-teamsTestMatrix2014[, numericColumnsTest] <- sapply(teamsTestMatrix2014[, numericColumnsTest], as.numeric)
+teamsTestMatrix2014 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE), 
+                                     stringsAsFactors = FALSE)
 
 validColTest <- sapply(names(teamsTestMatrix2014), function(nam){
   return(sum(is.na(teamsTestMatrix2014[, nam])))
@@ -442,7 +404,9 @@ rm(teamsShuffledMatrix2013, teamsTestMatrix2014)
 NCAA2014RFModelCV <- h2o.randomForest(x = seq(3, ncol(h2oTrain2014) - 1), y = ncol(h2oTrain2014),
                                       data = h2oTrain2014,
                                       nfolds = 5,
-                                      classification = TRUE,
+                                      #classification = TRUE,
+                                      classification = FALSE,
+                                      type = "BigData",                                                                           
                                       ntree = c(50, 75, 100),
                                       depth = c(20, 50, 75), 
                                       verbose = TRUE)
@@ -452,14 +416,15 @@ print(paste0("There is an AUC error of: ", NCAA2014RFModelCV@model[[1]]@model$au
 #Model Training
 NCAA2014RFModel <- h2o.randomForest(x = seq(3, ncol(h2oTrain2014) - 1), y = ncol(h2oTrain2014),
                                     data = h2oTrain2014,
-                                    classification = TRUE,
+                                    #classification = TRUE,
+                                    classification = FALSE,
                                     type = "BigData",
                                     ntree = NCAA2014RFModelCV@model[[1]]@model$params$ntree,
                                     depth = NCAA2014RFModelCV@model[[1]]@model$params$depth, 
                                     verbose = TRUE)
 
 #probability Predictions on all 2014 NCAA Games
-NCAA2014RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2014RFModel, newdata = h2oTest2014)[, 3]), digits = 8)
+NCAA2014RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2014RFModel, newdata = h2oTest2014)), digits = 8)
 
 #Shutdown h20 instance
 h2o.shutdown(h2oServer, prompt = FALSE)
@@ -469,8 +434,8 @@ sampleSubmission$pred <- c(NCAA2011RFPrediction[, 1],
                            NCAA2012RFPrediction[, 1],
                            NCAA2013RFPrediction[, 1], 
                            NCAA2014RFPrediction[, 1])
-write.csv(sampleSubmission, file = "RFIII.csv", row.names = FALSE)
-system('zip RFIII.zip RFIII.csv')
+write.csv(sampleSubmission, file = "RFV.csv", row.names = FALSE)
+system('zip RFV.zip RFV.csv')
 
 #Evaluate the models against the known results
 
