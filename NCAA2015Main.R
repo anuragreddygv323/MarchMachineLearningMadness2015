@@ -1,5 +1,5 @@
 #March Machine Learning Madness
-#Ver 0.6 #Margin of Victory (MOV) prediction, fixed factor to numeric bug
+#Ver 0.7 #Back to MOV outcomes, Power rankings included
 
 #Init-----------------------------------------------
 rm(list=ls(all=TRUE))
@@ -33,6 +33,7 @@ tourneySlots <- fread(file.path(dataDirectory, "tourney_slots.csv"))
 
 #Extra Data
 MasseyOrdinals <- fread(file.path(dataDirectory, "massey_ordinals.csv"))
+tourneyVenues <- fread(file.path(dataDirectory, "seasons_with_locations.csv"))
 
 #Write .csv
 sampleSubmission <- fread(file.path(dataDirectory, "sample_submission.csv"))
@@ -60,8 +61,6 @@ getSeedDivision <- function(seasonFromData, teamFromData, trimmedSouce = TRUE){
 
 rankingsColNames <- unique(MasseyOrdinals$sys_name)
 getExtraRankings <- function(seasonMatch, teamMatch){
-  #expresion <- paste0("select * from MasseyOrdinals where season = ", season, " and team = ", team) #too long it takes 6s per querry
-  #derp <- sqldf(expresion)
   masseyData <- MasseyOrdinals[MasseyOrdinals$team == teamMatch & MasseyOrdinals$season == seasonMatch] #it only takes 0.19s
   rankingSys <- match(masseyData$sys_name, rankingsColNames)
   extraRankingsTeam <- sapply(1:130, function(rankColNum){
@@ -80,23 +79,41 @@ makeTrainTable <- function(gamesIdx, shufIdxs, returnPointspread = TRUE){
   #Ordinal Ranks
   wTeamOrdinalRanks <- getExtraRankings(tourneyCompact$season[gamesIdx], tourneyCompact$wteam[gamesIdx])[1:33]
   lTeamOrdinalRanks <- getExtraRankings(tourneyCompact$season[gamesIdx], tourneyCompact$lteam[gamesIdx])[1:33]
-  #Predicted Pointspreads
-  predictedPointspreads <-  100 - 4 * log(wTeamOrdinalRanks + 1) - lTeamOrdinalRanks / 22
-    
+  #Transform Ordinals to power ratings
+  wTeamPowerRatings <- 100 - 4* log(wTeamOrdinalRanks + 1) - wTeamOrdinalRanks / 22
+  lTeamPowerRatings <- 100 - 4* log(lTeamOrdinalRanks + 1) - lTeamOrdinalRanks / 22  
+  #Seeds Power Ranking
+  wPowerSeeds <- 100 - 4 * log(as.numeric(wTeamSeed[1]) + 1) - as.numeric(wTeamSeed[1]) / 22
+  lPowerSeeds <- 100 - 4 * log(as.numeric(lTeamSeed[1]) + 1) - as.numeric(lTeamSeed[1]) / 22
+  
   if (shufIdxs[gamesIdx] == 1){    
     #Seed Based Benchmark
-    seedBasedBenchmark <- 0.5 + (as.numeric(lTeamSeed[1]) - as.numeric(wTeamSeed[1])) * 0.03
-    
+    seedBasedBenchmark <- 0.5 + (as.numeric(lTeamSeed[1]) - as.numeric(wTeamSeed[1])) * 0.03    
+        
     shuffledTeams <- c(tourneyCompact$wteam[gamesIdx], tourneyCompact$lteam[gamesIdx], 
-                       wTeamSeed, lTeamSeed, seedBasedBenchmark, wTeamOrdinalRanks, lTeamOrdinalRanks,
-                       (tourneyCompact$wscore[gamesIdx] - tourneyCompact$lscore[gamesIdx]))
+                       wTeamSeed, lTeamSeed, seedBasedBenchmark,
+                       (wPowerSeeds - lPowerSeeds),
+                       1 / (1 + 10 ^ (-(wPowerSeeds - lPowerSeeds)/15)),
+                       #wTeamOrdinalRanks, lTeamOrdinalRanks,
+                       #wTeamPowerRatings, lTeamPowerRatings,
+                       (wTeamPowerRatings - lTeamPowerRatings),
+                       1 / (1 + 10 ^ (-(wTeamPowerRatings - lTeamPowerRatings)/15)),
+                       tourneyCompact$wscore[gamesIdx] - tourneyCompact$lscore[gamesIdx]
+                       )
   }else{
     #Seed Based Benchmark
     seedBasedBenchmark <- 0.5 + (as.numeric(wTeamSeed[1]) - as.numeric(lTeamSeed[1])) * 0.03
-    
+        
     shuffledTeams <- c(tourneyCompact$lteam[gamesIdx], tourneyCompact$wteam[gamesIdx], 
-                       lTeamSeed, wTeamSeed, seedBasedBenchmark, lTeamOrdinalRanks, wTeamOrdinalRanks,
-                       (tourneyCompact$lscore[gamesIdx] - tourneyCompact$wscore[gamesIdx]))
+                       lTeamSeed, wTeamSeed, seedBasedBenchmark,
+                       (lPowerSeeds - wPowerSeeds),
+                       1 / (1 + 10 ^ (-(lPowerSeeds - wPowerSeeds)/15)),
+                       #lTeamOrdinalRanks, wTeamOrdinalRanks,
+                       #lTeamPowerRatings, wTeamPowerRatings, 
+                       (lTeamPowerRatings - wTeamPowerRatings),
+                       1 / (1 + 10 ^ (-(lTeamPowerRatings - wTeamPowerRatings)/15)),
+                       tourneyCompact$lscore[gamesIdx] - tourneyCompact$wscore[gamesIdx]
+                       )
   }  
   return(shuffledTeams)
 }
@@ -106,17 +123,29 @@ makeTestTable <- function(testIdx, team1Vector, team2Vector, season){
   #Get seeds from both teams
   team1Seed <- getSeedDivision(season, team1Vector[testIdx])
   team2Seed <- getSeedDivision(season, team2Vector[testIdx])
+  #Ordinal Rankings
   team1OrdinalRanks <- getExtraRankings(season, team1Vector[testIdx])[1:33]
   team2OrdinalRanks <- getExtraRankings(season, team2Vector[testIdx])[1:33]
-  #Predicted Pointspreads
-  #pointspreads <-  100 - 4 * log(team1OrdinalRanks + 1) - team2OrdinalRanks / 22
-  
+  #Transform Ordinals to power ratings
+  team1PowerRatings <- 100 - 4* log(team1OrdinalRanks + 1) - team1OrdinalRanks / 22
+  team2PowerRatings <- 100 - 4* log(team2OrdinalRanks + 1) - team2OrdinalRanks / 22  
+  #Seeds Power Ranking
+  team1PowerSeeds <- 100 - 4* log(as.numeric(team1Seed[1]) + 1) - as.numeric(team1Seed[1]) / 22
+  team2PowerSeeds <- 100 - 4* log(as.numeric(team2Seed[1]) + 1) - as.numeric(team2Seed[1]) / 22
+    
   #Seed Based Benchmark
   seedBasedBenchmark <- 0.5 + (as.numeric(team2Seed[1]) - as.numeric(team1Seed[1])) * 0.03
   
   #Make a vector containing the features
   matchTeams <- c(team1Vector[testIdx], team2Vector[testIdx], 
-                  team1Seed, team2Seed, seedBasedBenchmark, team1OrdinalRanks, team2OrdinalRanks)
+                  team1Seed, team2Seed, seedBasedBenchmark, 
+                  (team1PowerSeeds - team2PowerSeeds),
+                  1 / (1 + 10 ^ (-(team1PowerSeeds - team2PowerSeeds)/15)),                  
+                  #team1OrdinalRanks, team2OrdinalRanks, 
+                  #team1PowerRatings, team2PowerRatings, 
+                  (team1PowerRatings - team2PowerRatings),
+                  1 / (1 + 10 ^ (-(team1PowerRatings - team2PowerRatings)/15))
+                  )
   
   return(matchTeams)
 }
@@ -183,7 +212,7 @@ NCAA2011RFModelCV <- h2o.randomForest(x = seq(3, ncol(h2oTrain2011) - 1), y = nc
                                       depth = c(20, 50, 75), 
                                       verbose = TRUE)
 
-print(paste0("There is an AUC error of: ", NCAA2011RFModelCV@model[[1]]@model$auc))
+print(paste0("There is an AUC error of: ", min(NCAA2011RFModelCV@model[[1]]@model$mse, na.rm = TRUE)))
 
 #Model Training
 NCAA2011RFModel <- h2o.randomForest(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol(h2oTrain2011),
@@ -196,7 +225,7 @@ NCAA2011RFModel <- h2o.randomForest(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol
                                     verbose = TRUE)
 
 #probability Predictions on all 2011 NCAA Games
-NCAA2011RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2011RFModel, newdata = h2oTest2011)), digits = 8)
+NCAA2011RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2011RFModel, newdata = h2oTest2011)), digits = 8)[, 1]
 
 #Shutdown h20 instance
 h2o.shutdown(h2oServer, prompt = FALSE)
@@ -254,25 +283,25 @@ NCAA2012RFModelCV <- h2o.randomForest(x = seq(3, ncol(h2oTrain2012) - 1), y = nc
                                       nfolds = 5,
                                       #classification = TRUE,
                                       classification = FALSE,
-                                      type = "BigData",
+                                      type = "BigData",                                      
                                       ntree = c(50, 75, 100),
                                       depth = c(20, 50, 75), 
                                       verbose = TRUE)
 
-print(paste0("There is an AUC error of: ", NCAA2012RFModelCV@model[[1]]@model$auc))
+print(paste0("There is an AUC error of: ", min(NCAA2012RFModelCV@model[[1]]@model$mse, na.rm = TRUE)))
 
 #Model Training
 NCAA2012RFModel <- h2o.randomForest(x = seq(3, ncol(h2oTrain2012) - 1), y = ncol(h2oTrain2012),
                                     data = h2oTrain2012,
                                     #classification = TRUE,
                                     classification = FALSE,
-                                    type = "BigData",
+                                    type = "BigData", 
                                     ntree = NCAA2012RFModelCV@model[[1]]@model$params$ntree,
                                     depth = NCAA2012RFModelCV@model[[1]]@model$params$depth, 
                                     verbose = TRUE)
 
 #probability Predictions on all 2012 NCAA Games
-NCAA2012RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2012RFModel, newdata = h2oTest2012)), digits = 8)
+NCAA2012RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2012RFModel, newdata = h2oTest2012)), digits = 8)[, 1]
 
 #Shutdown h20 instance
 h2o.shutdown(h2oServer, prompt = FALSE)
@@ -330,25 +359,25 @@ NCAA2013RFModelCV <- h2o.randomForest(x = seq(3, ncol(h2oTrain2013) - 1), y = nc
                                       nfolds = 5,
                                       #classification = TRUE,
                                       classification = FALSE,
-                                      type = "BigData",                                                                            
+                                      type = "BigData", 
                                       ntree = c(50, 75, 100),
                                       depth = c(20, 50, 75), 
                                       verbose = TRUE)
 
-print(paste0("There is an AUC error of: ", NCAA2013RFModelCV@model[[1]]@model$auc))
+print(paste0("There is an AUC error of: ", min(NCAA2013RFModelCV@model[[1]]@model$mse, na.rm = TRUE)))
 
 #Model Training
 NCAA2013RFModel <- h2o.randomForest(x = seq(3, ncol(h2oTrain2013) - 1), y = ncol(h2oTrain2013),
                                     data = h2oTrain2013,
                                     #classification = TRUE,
                                     classification = FALSE,
-                                    type = "BigData",
+                                    type = "BigData", 
                                     ntree = NCAA2013RFModelCV@model[[1]]@model$params$ntree,
                                     depth = NCAA2013RFModelCV@model[[1]]@model$params$depth, 
                                     verbose = TRUE)
 
 #probability Predictions on all 2013 NCAA Games
-NCAA2013RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2013RFModel, newdata = h2oTest2013)), digits = 8)
+NCAA2013RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2013RFModel, newdata = h2oTest2013)), digits = 8)[, 1]
 
 #Shutdown h20 instance
 h2o.shutdown(h2oServer, prompt = FALSE)
@@ -406,36 +435,39 @@ NCAA2014RFModelCV <- h2o.randomForest(x = seq(3, ncol(h2oTrain2014) - 1), y = nc
                                       nfolds = 5,
                                       #classification = TRUE,
                                       classification = FALSE,
-                                      type = "BigData",                                                                           
+                                      type = "BigData", 
                                       ntree = c(50, 75, 100),
                                       depth = c(20, 50, 75), 
                                       verbose = TRUE)
 
-print(paste0("There is an AUC error of: ", NCAA2014RFModelCV@model[[1]]@model$auc))
+print(paste0("There is an AUC error of: ", min(NCAA2014RFModelCV@model[[1]]@model$mse, na.rm = TRUE)))
 
 #Model Training
 NCAA2014RFModel <- h2o.randomForest(x = seq(3, ncol(h2oTrain2014) - 1), y = ncol(h2oTrain2014),
                                     data = h2oTrain2014,
                                     #classification = TRUE,
                                     classification = FALSE,
-                                    type = "BigData",
+                                    type = "BigData", 
                                     ntree = NCAA2014RFModelCV@model[[1]]@model$params$ntree,
                                     depth = NCAA2014RFModelCV@model[[1]]@model$params$depth, 
                                     verbose = TRUE)
 
 #probability Predictions on all 2014 NCAA Games
-NCAA2014RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2014RFModel, newdata = h2oTest2014)), digits = 8)
+NCAA2014RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2014RFModel, newdata = h2oTest2014)), digits = 8)[, 1]
 
 #Shutdown h20 instance
 h2o.shutdown(h2oServer, prompt = FALSE)
 
 #Make a Kaggle Submission file with the predictions
-sampleSubmission$pred <- c(NCAA2011RFPrediction[, 1], 
-                           NCAA2012RFPrediction[, 1],
-                           NCAA2013RFPrediction[, 1], 
-                           NCAA2014RFPrediction[, 1])
-write.csv(sampleSubmission, file = "RFV.csv", row.names = FALSE)
-system('zip RFV.zip RFV.csv')
+sampleSubmission$pred <- c(NCAA2011RFPrediction, 
+                           NCAA2012RFPrediction,
+                           NCAA2013RFPrediction, 
+                           NCAA2014RFPrediction)
+
+sampleSubmission$pred <- 1 / (1 + 10 ^ (-(sampleSubmission$pred)/15))
+
+write.csv(sampleSubmission, file = "RFVII.csv", row.names = FALSE)
+system('zip RFVII.zip RFVII.csv')
 
 #Evaluate the models against the known results
 
