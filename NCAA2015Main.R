@@ -1,5 +1,5 @@
 #March Machine Learning Madness
-#Ver 0.7 #Back to MOV outcomes, Power rankings included
+#Ver 0.8 #average scores and winning percentages added
 
 #Init-----------------------------------------------
 rm(list=ls(all=TRUE))
@@ -38,6 +38,37 @@ tourneyVenues <- fread(file.path(dataDirectory, "seasons_with_locations.csv"))
 #Write .csv
 sampleSubmission <- fread(file.path(dataDirectory, "sample_submission.csv"))
 
+#Generated Data--------------------------------------
+#teamsBySeason since 2003
+allSeasons <- seq(2003, 2014)
+
+#Average points past tournaments and winning percentage
+averagePointsList <- lapply(allSeasons, function(marchSeason){
+  seasonIdx <- which(tourneyCompact$season == marchSeason)
+  teamsInTourney <- union(unique(tourneyCompact$wteam[seasonIdx]), unique(tourneyCompact$lteam[seasonIdx]))
+  teamsScores <- t(sapply(teamsInTourney, function(marchTeam){
+    winningScores <- tourneyCompact$wscore[seasonIdx][tourneyCompact$wteam[seasonIdx] == marchTeam]
+    losingScores <- tourneyCompact$lscore[seasonIdx][tourneyCompact$lteam[seasonIdx] == marchTeam]
+    #Winning Percentage
+    totalGamesPlayed <- length(winningScores) + length(losingScores)
+    winningPercentage <- length(winningScores) / totalGamesPlayed
+    return(c(marchTeam, mean(c(winningScores, losingScores)), winningPercentage))
+  }))
+  return(teamsScores)
+})
+names(averagePointsList) <- allSeasons
+
+getSeedDivision <- function(seasonFromData, teamFromData, trimmedSouce = TRUE){
+  #Reduce the search space 
+  if (trimmedSouce == TRUE){
+    #Only data from 2003
+    tourneySource <- tourneyCompact[1155:nrow(tourneyCompact)]
+  }else{
+    #Full Data (from 1985)
+    tourneySource <- tourneyCompact
+  }
+}
+
 #Data Mining (Functions)------------------------
 #Seed & Division 
 getSeedDivision <- function(seasonFromData, teamFromData, trimmedSouce = TRUE){
@@ -59,6 +90,7 @@ getSeedDivision <- function(seasonFromData, teamFromData, trimmedSouce = TRUE){
   return(c(seedTeam, divisionTeam))
 }
 
+#Obtain Massey Rankings
 rankingsColNames <- unique(MasseyOrdinals$sys_name)
 getExtraRankings <- function(seasonMatch, teamMatch){
   masseyData <- MasseyOrdinals[MasseyOrdinals$team == teamMatch & MasseyOrdinals$season == seasonMatch] #it only takes 0.19s
@@ -151,7 +183,7 @@ makeTestTable <- function(testIdx, team1Vector, team2Vector, season){
 }
 
 #EDA-------------------------------                  
-first2003Idx <- min(which(tourneyCompact$season == 2003)) 
+first2003Idx <- min(which(tourneyCompact$season == 2008)) 
 positionShuffles <- rbinom(nrow(tourneyCompact), 1, 0.5)
 
 #EDA 1; 2011 Season
@@ -466,8 +498,8 @@ sampleSubmission$pred <- c(NCAA2011RFPrediction,
 
 sampleSubmission$pred <- 1 / (1 + 10 ^ (-(sampleSubmission$pred)/15))
 
-write.csv(sampleSubmission, file = "RFVII.csv", row.names = FALSE)
-system('zip RFVII.zip RFVII.csv')
+write.csv(sampleSubmission, file = "RFVIII.csv", row.names = FALSE)
+system('zip RFVIII.zip RFVIII.csv')
 
 #Evaluate the models against the known results
 
