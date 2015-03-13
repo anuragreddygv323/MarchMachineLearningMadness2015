@@ -1,5 +1,5 @@
 #March Machine Learning Madness
-#Ver 0.8 #average scores and winning percentages added
+#Ver 0.9 #Best rankings selected, main algorithm changed to glm 
 
 #Init-----------------------------------------------
 rm(list=ls(all=TRUE))
@@ -8,6 +8,7 @@ rm(list=ls(all=TRUE))
 require("parallel")
 require("data.table")
 require("h2o")
+require("leaps")
 
 #Set Working Directory
 workingDirectory <- "/home/wacax/Wacax/Kaggle/March-Machine-Learning-Madness-2015/"
@@ -58,17 +59,6 @@ averagePointsList <- lapply(allSeasons, function(marchSeason){
 })
 names(averagePointsList) <- allSeasons
 
-getSeedDivision <- function(seasonFromData, teamFromData, trimmedSouce = TRUE){
-  #Reduce the search space 
-  if (trimmedSouce == TRUE){
-    #Only data from 2003
-    tourneySource <- tourneyCompact[1155:nrow(tourneyCompact)]
-  }else{
-    #Full Data (from 1985)
-    tourneySource <- tourneyCompact
-  }
-}
-
 #Data Mining (Functions)------------------------
 #Seed & Division 
 getSeedDivision <- function(seasonFromData, teamFromData, trimmedSouce = TRUE){
@@ -88,6 +78,17 @@ getSeedDivision <- function(seasonFromData, teamFromData, trimmedSouce = TRUE){
   divisionTeam <- gsub(pattern = "[a-z]", replacement = "", x = divisionTeam)  
   
   return(c(seedTeam, divisionTeam))
+}
+
+#get Team's average score and winning percentage
+getScoreAndWins <- function(seasonMatch, teamMatch){
+  table <- averagePointsList[[as.character(seasonMatch)]]
+  if (sum(table[, 1] == teamMatch) > 0){
+    scoreAndWins <- table[table[, 1] == teamMatch, c(2, 3)]
+  }else{
+    scoreAndWins <- c(0, 0)
+  }  
+  return(scoreAndWins)
 }
 
 #Obtain Massey Rankings
@@ -117,6 +118,13 @@ makeTrainTable <- function(gamesIdx, shufIdxs, returnPointspread = TRUE){
   #Seeds Power Ranking
   wPowerSeeds <- 100 - 4 * log(as.numeric(wTeamSeed[1]) + 1) - as.numeric(wTeamSeed[1]) / 22
   lPowerSeeds <- 100 - 4 * log(as.numeric(lTeamSeed[1]) + 1) - as.numeric(lTeamSeed[1]) / 22
+  #Average Scores & Winning percentages
+  wTeamScoreAndWins <- getScoreAndWins(tourneyCompact$season[gamesIdx] - 1, tourneyCompact$wteam[gamesIdx])
+  lTeamScoreAndWins <- getScoreAndWins(tourneyCompact$season[gamesIdx] - 1, tourneyCompact$lteam[gamesIdx])  
+  wTeamScoreAndWins2Years <- getScoreAndWins(tourneyCompact$season[gamesIdx] - 2, tourneyCompact$wteam[gamesIdx])
+  lTeamScoreAndWins2Years <- getScoreAndWins(tourneyCompact$season[gamesIdx] - 2, tourneyCompact$lteam[gamesIdx])   
+  wTeamScoreAndWins3Years <- getScoreAndWins(tourneyCompact$season[gamesIdx] - 3, tourneyCompact$wteam[gamesIdx])
+  lTeamScoreAndWins3Years <- getScoreAndWins(tourneyCompact$season[gamesIdx] - 3, tourneyCompact$lteam[gamesIdx])  
   
   if (shufIdxs[gamesIdx] == 1){    
     #Seed Based Benchmark
@@ -125,11 +133,12 @@ makeTrainTable <- function(gamesIdx, shufIdxs, returnPointspread = TRUE){
     shuffledTeams <- c(tourneyCompact$wteam[gamesIdx], tourneyCompact$lteam[gamesIdx], 
                        wTeamSeed, lTeamSeed, seedBasedBenchmark,
                        (wPowerSeeds - lPowerSeeds),
-                       1 / (1 + 10 ^ (-(wPowerSeeds - lPowerSeeds)/15)),
-                       #wTeamOrdinalRanks, lTeamOrdinalRanks,
-                       #wTeamPowerRatings, lTeamPowerRatings,
-                       (wTeamPowerRatings - lTeamPowerRatings),
-                       1 / (1 + 10 ^ (-(wTeamPowerRatings - lTeamPowerRatings)/15)),
+                       #1 / (1 + 10 ^ (-(wPowerSeeds - lPowerSeeds)/15)),
+                       (wTeamPowerRatings - lTeamPowerRatings), mean((wTeamPowerRatings - lTeamPowerRatings), na.rm = TRUE),
+                       #1 / (1 + 10 ^ (-(wTeamPowerRatings - lTeamPowerRatings)/15)),
+                       wTeamScoreAndWins - lTeamScoreAndWins,
+                       wTeamScoreAndWins2Years - lTeamScoreAndWins2Years,
+                       wTeamScoreAndWins3Years - lTeamScoreAndWins3Years,
                        tourneyCompact$wscore[gamesIdx] - tourneyCompact$lscore[gamesIdx]
                        )
   }else{
@@ -139,11 +148,12 @@ makeTrainTable <- function(gamesIdx, shufIdxs, returnPointspread = TRUE){
     shuffledTeams <- c(tourneyCompact$lteam[gamesIdx], tourneyCompact$wteam[gamesIdx], 
                        lTeamSeed, wTeamSeed, seedBasedBenchmark,
                        (lPowerSeeds - wPowerSeeds),
-                       1 / (1 + 10 ^ (-(lPowerSeeds - wPowerSeeds)/15)),
-                       #lTeamOrdinalRanks, wTeamOrdinalRanks,
-                       #lTeamPowerRatings, wTeamPowerRatings, 
-                       (lTeamPowerRatings - wTeamPowerRatings),
-                       1 / (1 + 10 ^ (-(lTeamPowerRatings - wTeamPowerRatings)/15)),
+                       #1 / (1 + 10 ^ (-(lPowerSeeds - wPowerSeeds)/15)),
+                       (lTeamPowerRatings - wTeamPowerRatings),  mean((lTeamPowerRatings - wTeamPowerRatings), na.rm = TRUE),
+                       #1 / (1 + 10 ^ (-(lTeamPowerRatings - wTeamPowerRatings)/15)),
+                       lTeamScoreAndWins - wTeamScoreAndWins,
+                       lTeamScoreAndWins2Years - wTeamScoreAndWins2Years,
+                       lTeamScoreAndWins3Years - wTeamScoreAndWins3Years,
                        tourneyCompact$lscore[gamesIdx] - tourneyCompact$wscore[gamesIdx]
                        )
   }  
@@ -164,6 +174,13 @@ makeTestTable <- function(testIdx, team1Vector, team2Vector, season){
   #Seeds Power Ranking
   team1PowerSeeds <- 100 - 4* log(as.numeric(team1Seed[1]) + 1) - as.numeric(team1Seed[1]) / 22
   team2PowerSeeds <- 100 - 4* log(as.numeric(team2Seed[1]) + 1) - as.numeric(team2Seed[1]) / 22
+  #Average Scores & Winning percentages
+  team1ScoreAndWins <- getScoreAndWins(season - 1, team1Vector[testIdx])
+  team2ScoreAndWins <- getScoreAndWins(season - 1, team2Vector[testIdx])
+  team1ScoreAndWins2Years <- getScoreAndWins(season - 2, team1Vector[testIdx])
+  team2ScoreAndWins2Years <- getScoreAndWins(season - 2, team2Vector[testIdx])   
+  team1ScoreAndWins3Years <- getScoreAndWins(season - 3, team1Vector[testIdx])
+  team2ScoreAndWins3Years <- getScoreAndWins(season - 3, team2Vector[testIdx])
     
   #Seed Based Benchmark
   seedBasedBenchmark <- 0.5 + (as.numeric(team2Seed[1]) - as.numeric(team1Seed[1])) * 0.03
@@ -172,18 +189,57 @@ makeTestTable <- function(testIdx, team1Vector, team2Vector, season){
   matchTeams <- c(team1Vector[testIdx], team2Vector[testIdx], 
                   team1Seed, team2Seed, seedBasedBenchmark, 
                   (team1PowerSeeds - team2PowerSeeds),
-                  1 / (1 + 10 ^ (-(team1PowerSeeds - team2PowerSeeds)/15)),                  
-                  #team1OrdinalRanks, team2OrdinalRanks, 
-                  #team1PowerRatings, team2PowerRatings, 
-                  (team1PowerRatings - team2PowerRatings),
-                  1 / (1 + 10 ^ (-(team1PowerRatings - team2PowerRatings)/15))
+                  #1 / (1 + 10 ^ (-(team1PowerSeeds - team2PowerSeeds)/15)),                  
+                  (team1PowerRatings - team2PowerRatings), mean((team1PowerRatings - team2PowerRatings), na.rm = TRUE),
+                  #1 / (1 + 10 ^ (-(team1PowerRatings - team2PowerRatings)/15)),
+                  team1ScoreAndWins - team2ScoreAndWins, 
+                  team1ScoreAndWins2Years - team2ScoreAndWins2Years, 
+                  team2ScoreAndWins3Years - team2ScoreAndWins3Years
                   )
   
   return(matchTeams)
 }
 
-#EDA-------------------------------                  
-first2003Idx <- min(which(tourneyCompact$season == 2008)) 
+#Select Best Rankings to Predict with--------------------------
+#EDA 0.5; 2014 Season
+#Training Data 2003 - 2013
+first2003Idx <- min(which(tourneyCompact$season == 2003)) 
+seasonDate <- 2015
+positionShuffles <- rbinom(nrow(tourneyCompact), 1, 0.5)
+
+lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
+teamsGamesUnlisted <- unlist(mclapply(seq(first2003Idx, lastIdx), makeTrainTable, mc.cores = numCores,
+                                      shufIdxs = positionShuffles))
+teamsShuffledMatrix2013 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
+                                         stringsAsFactors = FALSE)
+
+validColTrain <- sapply(names(teamsShuffledMatrix2013)[-length(names(teamsShuffledMatrix2013))], function(nam){
+  return(sum(is.na(teamsShuffledMatrix2013[, nam])))
+})
+
+for (i in seq(9, 42)){
+  teamsShuffledMatrix2013[, i] <- as.numeric(teamsShuffledMatrix2013[, i])
+}
+
+#Linear Model Selection for Rankings
+validRankings <- intersect(seq(9, 42), which(validColTrain == 0))
+linearBestModels <- regsubsets(x = as.matrix(teamsShuffledMatrix2013[, validRankings]),
+                               y = as.numeric(teamsShuffledMatrix2013[, ncol(teamsShuffledMatrix2013)]), 
+                               method = "backward")
+
+#Plot the best number of predictors
+bestMods <- summary(linearBestModels)
+bestNumberOfPredictors <- which.min(bestMods$cp)
+plot(bestMods$cp, xlab="Number of Variables", ylab="CP Error", main ="Best Number of Rankings")
+points(bestNumberOfPredictors, bestMods$cp[bestNumberOfPredictors],pch=20,col="red")
+
+#Name of the most predictive rankings
+predictors1 <- as.data.frame(bestMods$which)
+bestRankings <- names(sort(apply(predictors1[, -1], 2, sum), decreasing = TRUE)[1:bestNumberOfPredictors])
+
+#EDA Algorithms-------------------------------    
+#Set up training parameters
+first2003Idx <- min(which(tourneyCompact$season == 2003)) 
 positionShuffles <- rbinom(nrow(tourneyCompact), 1, 0.5)
 
 #EDA 1; 2011 Season
@@ -216,6 +272,8 @@ validColTest <- sapply(names(teamsTestMatrix2011), function(nam){
   })
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
+bestRankingsIdxs <- which(names(teamsShuffledMatrix2010) %in% bestRankings)
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 5, length(validCols))])
 
 #h2o.ai
 #Start h2o from command line
@@ -234,27 +292,22 @@ h2oTest2011 <- as.h2o(h2oServer, teamsTestMatrix2011[, validCols])
 rm(teamsShuffledMatrix2010, teamsTestMatrix2011)
 
 #h2o.ai Cross Validation
-NCAA2011RFModelCV <- h2o.randomForest(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol(h2oTrain2011),
-                                      data = h2oTrain2011,
-                                      nfolds = 5,
-                                      #classification = TRUE,
-                                      classification = FALSE,
-                                      type = "BigData",                                      
-                                      ntree = c(50, 75, 100),
-                                      depth = c(20, 50, 75), 
-                                      verbose = TRUE)
+NCAA2011RFModelCV <- h2o.glm(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol(h2oTrain2011),
+                             data = h2oTrain2011,
+                             nfolds = 5,
+                             family = "gaussian", 
+                             alpha = c(0, 1),
+                             lambda_search = TRUE,
+                             nlambda = 100)
 
-print(paste0("There is an AUC error of: ", min(NCAA2011RFModelCV@model[[1]]@model$mse, na.rm = TRUE)))
+print(paste0("There is an error of: ", NCAA2011RFModelCV@model[[1]]@model$deviance))
 
 #Model Training
-NCAA2011RFModel <- h2o.randomForest(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol(h2oTrain2011),
-                                    data = h2oTrain2011,
-                                    #classification = TRUE,
-                                    classification = FALSE,                                                                        
-                                    type = "BigData",
-                                    ntree = NCAA2011RFModelCV@model[[1]]@model$params$ntree,
-                                    depth = NCAA2011RFModelCV@model[[1]]@model$params$depth, 
-                                    verbose = TRUE)
+NCAA2011RFModel <- h2o.glm(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol(h2oTrain2011),
+                           data = h2oTrain2011,
+                           family = "gaussian", 
+                           alpha = NCAA2011RFModelCV@model[[1]]@model$params$alpha,
+                           lambda = NCAA2011RFModelCV@model[[1]]@model$params$lambda)
 
 #probability Predictions on all 2011 NCAA Games
 NCAA2011RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2011RFModel, newdata = h2oTest2011)), digits = 8)[, 1]
@@ -292,6 +345,8 @@ validColTest <- sapply(names(teamsTestMatrix2012), function(nam){
 })
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
+bestRankingsIdxs <- which(names(teamsShuffledMatrix2011) %in% bestRankings)
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 5, length(validCols))])
 
 #h2o.ai
 #Start h2o from command line
@@ -310,27 +365,22 @@ h2oTest2012 <- as.h2o(h2oServer, teamsTestMatrix2012[, validCols])
 rm(teamsShuffledMatrix2011, teamsTestMatrix2012)
 
 #h2o.ai Cross Validation
-NCAA2012RFModelCV <- h2o.randomForest(x = seq(3, ncol(h2oTrain2012) - 1), y = ncol(h2oTrain2012),
-                                      data = h2oTrain2012,
-                                      nfolds = 5,
-                                      #classification = TRUE,
-                                      classification = FALSE,
-                                      type = "BigData",                                      
-                                      ntree = c(50, 75, 100),
-                                      depth = c(20, 50, 75), 
-                                      verbose = TRUE)
+NCAA2012RFModelCV <- h2o.glm(x = seq(3, ncol(h2oTrain2012) - 1), y = ncol(h2oTrain2012),
+                             data = h2oTrain2012,
+                             nfolds = 5,
+                             family = "gaussian", 
+                             alpha = c(0, 1),
+                             lambda_search = TRUE,
+                             nlambda = 100)
 
-print(paste0("There is an AUC error of: ", min(NCAA2012RFModelCV@model[[1]]@model$mse, na.rm = TRUE)))
+print(paste0("There is an error of: ", NCAA2012RFModelCV@model[[1]]@model$deviance))
 
 #Model Training
-NCAA2012RFModel <- h2o.randomForest(x = seq(3, ncol(h2oTrain2012) - 1), y = ncol(h2oTrain2012),
-                                    data = h2oTrain2012,
-                                    #classification = TRUE,
-                                    classification = FALSE,
-                                    type = "BigData", 
-                                    ntree = NCAA2012RFModelCV@model[[1]]@model$params$ntree,
-                                    depth = NCAA2012RFModelCV@model[[1]]@model$params$depth, 
-                                    verbose = TRUE)
+NCAA2012RFModel <- h2o.glm(x = seq(3, ncol(h2oTrain2012) - 1), y = ncol(h2oTrain2012),
+                           data = h2oTrain2012,
+                           family = "gaussian", 
+                           alpha = NCAA2011RFModelCV@model[[1]]@model$params$alpha,
+                           lambda = NCAA2011RFModelCV@model[[1]]@model$params$lambda)
 
 #probability Predictions on all 2012 NCAA Games
 NCAA2012RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2012RFModel, newdata = h2oTest2012)), digits = 8)[, 1]
@@ -368,6 +418,8 @@ validColTest <- sapply(names(teamsTestMatrix2013), function(nam){
 })
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
+bestRankingsIdxs <- which(names(teamsShuffledMatrix2012) %in% bestRankings)
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 5, length(validCols))])
 
 #h2o.ai
 #Start h2o from command line
@@ -386,27 +438,22 @@ h2oTest2013 <- as.h2o(h2oServer, teamsTestMatrix2013[, validCols])
 rm(teamsShuffledMatrix2012, teamsTestMatrix2013)
 
 #h2o.ai Cross Validation
-NCAA2013RFModelCV <- h2o.randomForest(x = seq(3, ncol(h2oTrain2013) - 1), y = ncol(h2oTrain2013),
-                                      data = h2oTrain2013,
-                                      nfolds = 5,
-                                      #classification = TRUE,
-                                      classification = FALSE,
-                                      type = "BigData", 
-                                      ntree = c(50, 75, 100),
-                                      depth = c(20, 50, 75), 
-                                      verbose = TRUE)
+NCAA2013RFModelCV <- h2o.glm(x = seq(3, ncol(h2oTrain2013) - 1), y = ncol(h2oTrain2013),
+                             data = h2oTrain2013,
+                             nfolds = 5,
+                             family = "gaussian", 
+                             alpha = c(0, 1),
+                             lambda_search = TRUE,
+                             nlambda = 100)
 
-print(paste0("There is an AUC error of: ", min(NCAA2013RFModelCV@model[[1]]@model$mse, na.rm = TRUE)))
+print(paste0("There is an error of: ", NCAA2013RFModelCV@model[[1]]@model$deviance))
 
 #Model Training
-NCAA2013RFModel <- h2o.randomForest(x = seq(3, ncol(h2oTrain2013) - 1), y = ncol(h2oTrain2013),
-                                    data = h2oTrain2013,
-                                    #classification = TRUE,
-                                    classification = FALSE,
-                                    type = "BigData", 
-                                    ntree = NCAA2013RFModelCV@model[[1]]@model$params$ntree,
-                                    depth = NCAA2013RFModelCV@model[[1]]@model$params$depth, 
-                                    verbose = TRUE)
+NCAA2013RFModel <- h2o.glm(x = seq(3, ncol(h2oTrain2013) - 1), y = ncol(h2oTrain2013),
+                           data = h2oTrain2013,
+                           family = "gaussian", 
+                           alpha = NCAA2011RFModelCV@model[[1]]@model$params$alpha,
+                           lambda = NCAA2011RFModelCV@model[[1]]@model$params$lambda)
 
 #probability Predictions on all 2013 NCAA Games
 NCAA2013RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2013RFModel, newdata = h2oTest2013)), digits = 8)[, 1]
@@ -444,6 +491,8 @@ validColTest <- sapply(names(teamsTestMatrix2014), function(nam){
 })
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
+bestRankingsIdxs <- which(names(teamsShuffledMatrix2013) %in% bestRankings)
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 5, length(validCols))])
 
 #h2o.ai
 #Start h2o from command line
@@ -462,27 +511,22 @@ h2oTest2014 <- as.h2o(h2oServer, teamsTestMatrix2014[, validCols])
 rm(teamsShuffledMatrix2013, teamsTestMatrix2014)
 
 #h2o.ai Cross Validation
-NCAA2014RFModelCV <- h2o.randomForest(x = seq(3, ncol(h2oTrain2014) - 1), y = ncol(h2oTrain2014),
-                                      data = h2oTrain2014,
-                                      nfolds = 5,
-                                      #classification = TRUE,
-                                      classification = FALSE,
-                                      type = "BigData", 
-                                      ntree = c(50, 75, 100),
-                                      depth = c(20, 50, 75), 
-                                      verbose = TRUE)
+NCAA2014RFModelCV <- h2o.glm(x = seq(3, ncol(h2oTrain2014) - 1), y = ncol(h2oTrain2014),
+                             data = h2oTrain2014,
+                             nfolds = 5,
+                             family = "gaussian", 
+                             alpha = c(0, 1),
+                             lambda_search = TRUE,
+                             nlambda = 100)
 
-print(paste0("There is an AUC error of: ", min(NCAA2014RFModelCV@model[[1]]@model$mse, na.rm = TRUE)))
+print(paste0("There is an error of: ", NCAA2014RFModelCV@model[[1]]@model$deviance))
 
 #Model Training
-NCAA2014RFModel <- h2o.randomForest(x = seq(3, ncol(h2oTrain2014) - 1), y = ncol(h2oTrain2014),
-                                    data = h2oTrain2014,
-                                    #classification = TRUE,
-                                    classification = FALSE,
-                                    type = "BigData", 
-                                    ntree = NCAA2014RFModelCV@model[[1]]@model$params$ntree,
-                                    depth = NCAA2014RFModelCV@model[[1]]@model$params$depth, 
-                                    verbose = TRUE)
+NCAA2014RFModel <- h2o.glm(x = seq(3, ncol(h2oTrain2014) - 1), y = ncol(h2oTrain2014),
+                           data = h2oTrain2014,
+                           family = "gaussian", 
+                           alpha = NCAA2011RFModelCV@model[[1]]@model$params$alpha,
+                           lambda = NCAA2011RFModelCV@model[[1]]@model$params$lambda)
 
 #probability Predictions on all 2014 NCAA Games
 NCAA2014RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2014RFModel, newdata = h2oTest2014)), digits = 8)[, 1]
@@ -498,10 +542,32 @@ sampleSubmission$pred <- c(NCAA2011RFPrediction,
 
 sampleSubmission$pred <- 1 / (1 + 10 ^ (-(sampleSubmission$pred)/15))
 
-write.csv(sampleSubmission, file = "RFVIII.csv", row.names = FALSE)
-system('zip RFVIII.zip RFVIII.csv')
+write.csv(sampleSubmission, file = "RFXI.csv", row.names = FALSE)
+system('zip RFXI.zip RFXI.csv')
 
-#Evaluate the models against the known results
+#Evaluate the models against the known results--------------------------
+#Season 2011
+seasonDate <- 2011
+season2011Indexes <- which(substr(sampleSubmission$id, 1, 4) == seasonDate)
+teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2011Indexes])
+teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
+
+derp <- sapply(1:length(tourneyCompact$wteam[tourneyCompact$season == seasonDate]), function(matchIdx){
+  predictionIdx <- union(which(teams1 %in% tourneyCompact$wteam[tourneyCompact$season == seasonDate][matchIdx] &
+                                 teams2 %in% tourneyCompact$lteam[tourneyCompact$season == seasonDate][matchIdx]),
+                         which(teams2 %in% tourneyCompact$wteam[tourneyCompact$season == seasonDate][matchIdx] &
+                                 teams1 %in% tourneyCompact$lteam[tourneyCompact$season == seasonDate][matchIdx]))  
+  return(predictionIdx)
+})
+
+
+#Season 2012
+season11Idx <- tourneyCompact$season == 2012
+#Season 2013
+season11Idx <- tourneyCompact$season == 2013
+#Season 2014
+season11Idx <- tourneyCompact$season == 2014
+
 
 #MARCH MACHINE LEARNING 2015------------------------
 #TODO
