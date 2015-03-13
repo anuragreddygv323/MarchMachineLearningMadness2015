@@ -1,5 +1,5 @@
 #March Machine Learning Madness
-#Ver 0.9 #Best rankings selected, main algorithm changed to glm 
+#Ver 0.10 #2015 Season added with preliminary data
 
 #Init-----------------------------------------------
 rm(list=ls(all=TRUE))
@@ -210,21 +210,21 @@ positionShuffles <- rbinom(nrow(tourneyCompact), 1, 0.5)
 lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
 teamsGamesUnlisted <- unlist(mclapply(seq(first2003Idx, lastIdx), makeTrainTable, mc.cores = numCores,
                                       shufIdxs = positionShuffles))
-teamsShuffledMatrix2013 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
+teamsShuffledMatrix2014 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
                                          stringsAsFactors = FALSE)
 
-validColTrain <- sapply(names(teamsShuffledMatrix2013)[-length(names(teamsShuffledMatrix2013))], function(nam){
-  return(sum(is.na(teamsShuffledMatrix2013[, nam])))
+validColTrain <- sapply(names(teamsShuffledMatrix2014)[-length(names(teamsShuffledMatrix2014))], function(nam){
+  return(sum(is.na(teamsShuffledMatrix2014[, nam])))
 })
 
 for (i in seq(9, 42)){
-  teamsShuffledMatrix2013[, i] <- as.numeric(teamsShuffledMatrix2013[, i])
+  teamsShuffledMatrix2014[, i] <- as.numeric(teamsShuffledMatrix2014[, i])
 }
 
 #Linear Model Selection for Rankings
 validRankings <- intersect(seq(9, 42), which(validColTrain == 0))
-linearBestModels <- regsubsets(x = as.matrix(teamsShuffledMatrix2013[, validRankings]),
-                               y = as.numeric(teamsShuffledMatrix2013[, ncol(teamsShuffledMatrix2013)]), 
+linearBestModels <- regsubsets(x = as.matrix(teamsShuffledMatrix2014[, validRankings]),
+                               y = as.numeric(teamsShuffledMatrix2014[, ncol(teamsShuffledMatrix2014)]), 
                                method = "backward")
 
 #Plot the best number of predictors
@@ -542,8 +542,8 @@ sampleSubmission$pred <- c(NCAA2011RFPrediction,
 
 sampleSubmission$pred <- 1 / (1 + 10 ^ (-(sampleSubmission$pred)/15))
 
-write.csv(sampleSubmission, file = "RFXI.csv", row.names = FALSE)
-system('zip RFXI.zip RFXI.csv')
+write.csv(sampleSubmission, file = "RFXII.csv", row.names = FALSE)
+system('zip RFXII.zip RFXII.csv')
 
 #Evaluate the models against the known results--------------------------
 #Season 2011
@@ -570,8 +570,96 @@ season11Idx <- tourneyCompact$season == 2014
 
 
 #MARCH MACHINE LEARNING 2015------------------------
-#TODO
+#Read New Data
+masseyOrdinals2015 <- fread(file.path(dataDirectory, "massey_ordinals_2015_prelim.csv"))
+seeds2015 <- fread(file.path(dataDirectory, "tourney_seeds_2015_prelim.csv"))
+
+#Append to Old Data
+MasseyOrdinals <- rbind(MasseyOrdinals, masseyOrdinals2015)
+tourneySeeds <- rbind(tourneySeeds, seeds2015)
+
+#Write .csv
+sampleSubmission <- fread(file.path(dataDirectory, "sample_submission_2015_prelim_all50pct.csv"))
+
+#Training Data 2003 - 2014
+#Set up training parameters
+first2003Idx <- min(which(tourneyCompact$season == 2003)) 
+positionShuffles <- rbinom(nrow(tourneyCompact), 1, 0.5)
+
+seasonDate <- 2015
+lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
+teamsGamesUnlisted <- unlist(mclapply(seq(first2003Idx, lastIdx), makeTrainTable, mc.cores = numCores,
+                                      shufIdxs = positionShuffles))
+teamsShuffledMatrix2014 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
+                                         stringsAsFactors = FALSE)
+
+validColTrain <- sapply(names(teamsShuffledMatrix2014)[-length(names(teamsShuffledMatrix2014))], function(nam){
+  return(sum(is.na(teamsShuffledMatrix2014[, nam])))
+})
+
+#Test Data; 2015 Season
+teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9))
+teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14))
+
+teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
+                                          team1Vector = teams1, team2Vector = teams2,
+                                          season = seasonDate))
+teamsTestMatrix2015 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE), 
+                                     stringsAsFactors = FALSE)
+
+validColTest <- sapply(names(teamsTestMatrix2015), function(nam){
+  return(sum(is.na(teamsTestMatrix2015[, nam])))
+})
+
+validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
+bestRankingsIdxs <- which(names(teamsShuffledMatrix2014) %in% bestRankings)
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 5, length(validCols))])
+
+#h2o.ai
+#Start h2o from command line
+system(paste0("java -Xmx5G -jar ", h2o.jarLoc, " -port 54333 -name NCAA2015 &"))
+#Small pause
+Sys.sleep(3)
+#Connect R to h2o
+h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
+
+#Load Data to h2o
+#h2o.ai Train
+h2oTrain2015 <- as.h2o(h2oServer, teamsShuffledMatrix2014[, c(validCols, ncol(teamsShuffledMatrix2014))])
+#h2o.ai Test
+h2oTest2015 <- as.h2o(h2oServer, teamsTestMatrix2015[, validCols])
+#Remove Data
+rm(teamsShuffledMatrix2014, teamsTestMatrix2015)
+
+#h2o.ai Cross Validation
+NCAA2015RFModelCV <- h2o.glm(x = seq(3, ncol(h2oTrain2015) - 1), y = ncol(h2oTrain2015),
+                             data = h2oTrain2015,
+                             nfolds = 5,
+                             family = "gaussian", 
+                             alpha = c(0, 1),
+                             lambda_search = TRUE,
+                             nlambda = 100)
+
+print(paste0("There is an error of: ", NCAA2015RFModelCV@model[[1]]@model$deviance))
+
+#Model Training
+NCAA2015RFModel <- h2o.glm(x = seq(3, ncol(h2oTrain2015) - 1), y = ncol(h2oTrain2015),
+                           data = h2oTrain2015,
+                           family = "gaussian", 
+                           alpha = NCAA2015RFModelCV@model[[1]]@model$params$alpha,
+                           lambda = NCAA2015RFModelCV@model[[1]]@model$params$lambda)
+
+#probability Predictions on all 2014 NCAA Games
+NCAA2015RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2015RFModel, newdata = h2oTest2015)), digits = 8)[, 1]
+
+#Shutdown h20 instance
+h2o.shutdown(h2oServer, prompt = FALSE)
 
 #Make a Kaggle Submission file with the predictions
+sampleSubmission$pred <- NCAA2015RFPrediction
 
+sampleSubmission$pred <- 1 / (1 + 10 ^ (-(sampleSubmission$pred)/15))
+
+write.csv(sampleSubmission, file = "GLM2015I.csv", row.names = FALSE)
+system('zip GLM2015I.zip GLM2015I.csv')
 
