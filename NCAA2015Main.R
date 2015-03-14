@@ -1,5 +1,5 @@
 #March Machine Learning Madness
-#Ver 0.10 #2015 Season added with preliminary data & for and against points in season
+#Ver 0.11 #bugs fixed
 
 #Init-----------------------------------------------
 rm(list=ls(all=TRUE))
@@ -124,7 +124,7 @@ getScoreAndWins <- function(seasonMatch, teamMatch){
 getForAndAgainstPoints <- function(seasonMatch, teamMatch){
   table <- pointsSeasonList[[as.character(seasonMatch)]]
   forAndAgainstPoints <- table[table[, 1] == teamMatch, c(2, 3)]  
-  return(scoreAndWins)
+  return(forAndAgainstPoints)
 }
 
 #Obtain Massey Rankings
@@ -179,8 +179,7 @@ makeTrainTable <- function(gamesIdx, shufIdxs, returnPointspread = TRUE){
                        wTeamScoreAndWins2Years - lTeamScoreAndWins2Years,
                        wTeamScoreAndWins3Years - lTeamScoreAndWins3Years,
                        wForAndAgainstPoints, lForAndAgainstPoints,
-                       tourneyCompact$wscore[gamesIdx] - tourneyCompact$lscore[gamesIdx]
-                       )
+                       tourneyCompact$wscore[gamesIdx] - tourneyCompact$lscore[gamesIdx])
   }else{
     #Seed Based Benchmark
     seedBasedBenchmark <- 0.5 + (as.numeric(wTeamSeed[1]) - as.numeric(lTeamSeed[1])) * 0.03
@@ -195,8 +194,7 @@ makeTrainTable <- function(gamesIdx, shufIdxs, returnPointspread = TRUE){
                        lTeamScoreAndWins2Years - wTeamScoreAndWins2Years,
                        lTeamScoreAndWins3Years - wTeamScoreAndWins3Years,
                        lForAndAgainstPoints, wForAndAgainstPoints,
-                       tourneyCompact$lscore[gamesIdx] - tourneyCompact$wscore[gamesIdx]
-                       )
+                       tourneyCompact$lscore[gamesIdx] - tourneyCompact$wscore[gamesIdx])
   }  
   return(shuffledTeams)
 }
@@ -239,8 +237,7 @@ makeTestTable <- function(testIdx, team1Vector, team2Vector, season){
                   team1ScoreAndWins - team2ScoreAndWins, 
                   team1ScoreAndWins2Years - team2ScoreAndWins2Years, 
                   team1ScoreAndWins3Years - team2ScoreAndWins3Years, 
-                  team1ForAndAgainstPoints, team2ForAndAgainstPoints,
-                  )
+                  team1ForAndAgainstPoints, team2ForAndAgainstPoints)
   
   return(matchTeams)
 }
@@ -330,9 +327,9 @@ h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
 
 #Load Data to h2o
 #h2o.ai Train
-h2oTrain2011 <- as.h2o(h2oServer, teamsShuffledMatrix2010[, c(validCols, ncol(teamsShuffledMatrix2010))])
+h2oTrain2011 <- as.h2o(h2oServer, signif(teamsShuffledMatrix2010[, c(validCols, ncol(teamsShuffledMatrix2010))], digits = 6))
 #h2o.ai Test
-h2oTest2011 <- as.h2o(h2oServer, teamsTestMatrix2011[, validCols])
+h2oTest2011 <- as.h2o(h2oServer, signif(teamsTestMatrix2011[, validCols], digits = 6))
 #Remove Data
 rm(teamsShuffledMatrix2010, teamsTestMatrix2011)
 
@@ -403,9 +400,9 @@ h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
 
 #Load Data to h2o
 #h2o.ai Train
-h2oTrain2012 <- as.h2o(h2oServer, teamsShuffledMatrix2011[, c(validCols, ncol(teamsShuffledMatrix2011))])
+h2oTrain2012 <- as.h2o(h2oServer, signif(teamsShuffledMatrix2011[, c(validCols, ncol(teamsShuffledMatrix2011))], digits = 6))
 #h2o.ai Test
-h2oTest2012 <- as.h2o(h2oServer, teamsTestMatrix2012[, validCols])
+h2oTest2012 <- as.h2o(h2oServer, signif(teamsTestMatrix2012[, validCols], digits = 6))
 #Remove Data
 rm(teamsShuffledMatrix2011, teamsTestMatrix2012)
 
@@ -476,9 +473,9 @@ h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
 
 #Load Data to h2o
 #h2o.ai Train
-h2oTrain2013 <- as.h2o(h2oServer, teamsShuffledMatrix2012[, c(validCols, ncol(teamsShuffledMatrix2012))])
+h2oTrain2013 <- as.h2o(h2oServer, signif(teamsShuffledMatrix2012[, c(validCols, ncol(teamsShuffledMatrix2012))], digits = 6))
 #h2o.ai Test
-h2oTest2013 <- as.h2o(h2oServer, teamsTestMatrix2013[, validCols])
+h2oTest2013 <- as.h2o(h2oServer, signif(teamsTestMatrix2013[, validCols], digits = 6))
 #Remove Data
 rm(teamsShuffledMatrix2012, teamsTestMatrix2013)
 
@@ -549,9 +546,9 @@ h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
 
 #Load Data to h2o
 #h2o.ai Train
-h2oTrain2014 <- as.h2o(h2oServer, teamsShuffledMatrix2013[, c(validCols, ncol(teamsShuffledMatrix2013))])
+h2oTrain2014 <- as.h2o(h2oServer, signif(teamsShuffledMatrix2013[, c(validCols, ncol(teamsShuffledMatrix2013))], digits = 6))
 #h2o.ai Test
-h2oTest2014 <- as.h2o(h2oServer, teamsTestMatrix2014[, validCols])
+h2oTest2014 <- as.h2o(h2oServer, signif(teamsTestMatrix2014[, validCols], digits = 6))
 #Remove Data
 rm(teamsShuffledMatrix2013, teamsTestMatrix2014)
 
@@ -587,8 +584,8 @@ sampleSubmission$pred <- c(NCAA2011RFPrediction,
 
 sampleSubmission$pred <- 1 / (1 + 10 ^ (-(sampleSubmission$pred)/15))
 
-write.csv(sampleSubmission, file = "RFXIV.csv", row.names = FALSE)
-system('zip RFXIV.zip RFXIV.csv')
+write.csv(sampleSubmission, file = "RFXV.csv", row.names = FALSE)
+system('zip RFXV.zip RFXV.csv')
 
 #Evaluate the models against the known results--------------------------
 #Season 2011
@@ -666,9 +663,9 @@ h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
 
 #Load Data to h2o
 #h2o.ai Train
-h2oTrain2015 <- as.h2o(h2oServer, teamsShuffledMatrix2014[, c(validCols, ncol(teamsShuffledMatrix2014))])
+h2oTrain2015 <- as.h2o(h2oServer, signif(teamsShuffledMatrix2014[, c(validCols, ncol(teamsShuffledMatrix2014))], digits = 6))
 #h2o.ai Test
-h2oTest2015 <- as.h2o(h2oServer, teamsTestMatrix2015[, validCols])
+h2oTest2015 <- as.h2o(h2oServer, signif(teamsTestMatrix2015[, validCols], digits = 6))
 #Remove Data
 rm(teamsShuffledMatrix2014, teamsTestMatrix2015)
 
