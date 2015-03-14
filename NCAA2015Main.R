@@ -1,5 +1,5 @@
 #March Machine Learning Madness
-#Ver 0.10 #2015 Season added with preliminary data
+#Ver 0.10 #2015 Season added with preliminary data & for and against points in season
 
 #Init-----------------------------------------------
 rm(list=ls(all=TRUE))
@@ -14,8 +14,6 @@ require("leaps")
 workingDirectory <- "/home/wacax/Wacax/Kaggle/March-Machine-Learning-Madness-2015/"
 setwd(workingDirectory)
 dataDirectory <- "/home/wacax/Wacax/Kaggle/March-Machine-Learning-Madness-2015/Data/"
-outputDirectory <- "/home/wacax/Wacax/Kaggle/March-Machine-Learning-Madness-2015/Data/Output"
-vw77Dir = "/home/wacax/vowpal_wabbit-7.7/vowpalwabbit/"
 #h2o location
 h2o.jarLoc <- "/home/wacax/R/x86_64-pc-linux-gnu-library/3.1/h2o/java/h2o.jar"
 
@@ -31,6 +29,14 @@ tourneyCompact <- fread(file.path(dataDirectory, "tourney_compact_results.csv"))
 tourneyDetailed <- fread(file.path(dataDirectory, "tourney_detailed_results.csv"))
 tourneySeeds <- fread(file.path(dataDirectory, "tourney_seeds.csv"))
 tourneySlots <- fread(file.path(dataDirectory, "tourney_slots.csv"))
+#Append 2015 data
+seasonCompact2015 <- fread(file.path(dataDirectory, "regular_season_compact_results_2015_prelim.csv"))
+seasonDetailed2015 <- fread(file.path(dataDirectory, "regular_season_detailed_results_2015_prelim.csv"))
+seeds2015 <- fread(file.path(dataDirectory, "tourney_seeds_2015_prelim.csv"))
+seasonCompact <- rbind(seasonCompact, seasonCompact2015)
+seasonDetailed <- rbind(seasonDetailed, seasonDetailed2015)
+tourneySeeds <- rbind(tourneySeeds, seeds2015)
+
 
 #Extra Data
 MasseyOrdinals <- fread(file.path(dataDirectory, "massey_ordinals.csv"))
@@ -58,6 +64,29 @@ averagePointsList <- lapply(allSeasons, function(marchSeason){
   return(teamsScores)
 })
 names(averagePointsList) <- allSeasons
+
+#teamsBySeason since 2003
+allSeasons <- seq(2003, 2015)
+
+#Average points scored and recieved during the season and averages
+pointsSeasonList <- lapply(allSeasons, function(marchSeason){
+  seasonIdx <- which(seasonCompact$season == marchSeason)
+  teamsInTourney <- tourneySeeds$team[which(tourneySeeds$season == marchSeason)]
+  teamsScores <- t(sapply(teamsInTourney, function(marchTeam){
+    #For points
+    winningPointsMade <- seasonCompact$wscore[seasonIdx][seasonCompact$wteam[seasonIdx] == marchTeam]
+    losingPointsMade <- seasonCompact$lscore[seasonIdx][seasonCompact$lteam[seasonIdx] == marchTeam]
+    #Against points
+    winningPointsAgainst <- seasonCompact$lscore[seasonIdx][seasonCompact$wteam[seasonIdx] == marchTeam]
+    losingPointsAgainst <- seasonCompact$wscore[seasonIdx][seasonCompact$lteam[seasonIdx] == marchTeam]
+    
+    return(c(marchTeam,
+             mean(c(winningPointsMade, losingPointsMade)), 
+             mean(c(winningPointsAgainst, losingPointsAgainst))))
+  }))
+  return(teamsScores)
+})
+names(pointsSeasonList) <- allSeasons
 
 #Data Mining (Functions)------------------------
 #Seed & Division 
@@ -88,6 +117,13 @@ getScoreAndWins <- function(seasonMatch, teamMatch){
   }else{
     scoreAndWins <- c(0, 0)
   }  
+  return(scoreAndWins)
+}
+
+#get Team's average for and against points during regular season
+getForAndAgainstPoints <- function(seasonMatch, teamMatch){
+  table <- pointsSeasonList[[as.character(seasonMatch)]]
+  forAndAgainstPoints <- table[table[, 1] == teamMatch, c(2, 3)]  
   return(scoreAndWins)
 }
 
@@ -125,6 +161,9 @@ makeTrainTable <- function(gamesIdx, shufIdxs, returnPointspread = TRUE){
   lTeamScoreAndWins2Years <- getScoreAndWins(tourneyCompact$season[gamesIdx] - 2, tourneyCompact$lteam[gamesIdx])   
   wTeamScoreAndWins3Years <- getScoreAndWins(tourneyCompact$season[gamesIdx] - 3, tourneyCompact$wteam[gamesIdx])
   lTeamScoreAndWins3Years <- getScoreAndWins(tourneyCompact$season[gamesIdx] - 3, tourneyCompact$lteam[gamesIdx])  
+  #Average Points for and against during regular season
+  wForAndAgainstPoints <- getForAndAgainstPoints(tourneyCompact$season[gamesIdx], tourneyCompact$wteam[gamesIdx])
+  lForAndAgainstPoints <- getForAndAgainstPoints(tourneyCompact$season[gamesIdx], tourneyCompact$lteam[gamesIdx])  
   
   if (shufIdxs[gamesIdx] == 1){    
     #Seed Based Benchmark
@@ -139,6 +178,7 @@ makeTrainTable <- function(gamesIdx, shufIdxs, returnPointspread = TRUE){
                        wTeamScoreAndWins - lTeamScoreAndWins,
                        wTeamScoreAndWins2Years - lTeamScoreAndWins2Years,
                        wTeamScoreAndWins3Years - lTeamScoreAndWins3Years,
+                       wForAndAgainstPoints, lForAndAgainstPoints,
                        tourneyCompact$wscore[gamesIdx] - tourneyCompact$lscore[gamesIdx]
                        )
   }else{
@@ -154,6 +194,7 @@ makeTrainTable <- function(gamesIdx, shufIdxs, returnPointspread = TRUE){
                        lTeamScoreAndWins - wTeamScoreAndWins,
                        lTeamScoreAndWins2Years - wTeamScoreAndWins2Years,
                        lTeamScoreAndWins3Years - wTeamScoreAndWins3Years,
+                       lForAndAgainstPoints, wForAndAgainstPoints,
                        tourneyCompact$lscore[gamesIdx] - tourneyCompact$wscore[gamesIdx]
                        )
   }  
@@ -181,6 +222,9 @@ makeTestTable <- function(testIdx, team1Vector, team2Vector, season){
   team2ScoreAndWins2Years <- getScoreAndWins(season - 2, team2Vector[testIdx])   
   team1ScoreAndWins3Years <- getScoreAndWins(season - 3, team1Vector[testIdx])
   team2ScoreAndWins3Years <- getScoreAndWins(season - 3, team2Vector[testIdx])
+  #Average Points for and against during regular season
+  team1ForAndAgainstPoints <- getForAndAgainstPoints(season, team1Vector[testIdx])
+  team2ForAndAgainstPoints <- getForAndAgainstPoints(season, team2Vector[testIdx])  
     
   #Seed Based Benchmark
   seedBasedBenchmark <- 0.5 + (as.numeric(team2Seed[1]) - as.numeric(team1Seed[1])) * 0.03
@@ -194,7 +238,8 @@ makeTestTable <- function(testIdx, team1Vector, team2Vector, season){
                   #1 / (1 + 10 ^ (-(team1PowerRatings - team2PowerRatings)/15)),
                   team1ScoreAndWins - team2ScoreAndWins, 
                   team1ScoreAndWins2Years - team2ScoreAndWins2Years, 
-                  team2ScoreAndWins3Years - team2ScoreAndWins3Years
+                  team1ScoreAndWins3Years - team2ScoreAndWins3Years, 
+                  team1ForAndAgainstPoints, team2ForAndAgainstPoints,
                   )
   
   return(matchTeams)
@@ -273,7 +318,7 @@ validColTest <- sapply(names(teamsTestMatrix2011), function(nam){
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2010) %in% bestRankings)
-validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 5, length(validCols))])
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
 #h2o.ai
 #Start h2o from command line
@@ -346,7 +391,7 @@ validColTest <- sapply(names(teamsTestMatrix2012), function(nam){
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2011) %in% bestRankings)
-validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 5, length(validCols))])
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
 #h2o.ai
 #Start h2o from command line
@@ -419,7 +464,7 @@ validColTest <- sapply(names(teamsTestMatrix2013), function(nam){
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2012) %in% bestRankings)
-validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 5, length(validCols))])
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
 #h2o.ai
 #Start h2o from command line
@@ -492,7 +537,7 @@ validColTest <- sapply(names(teamsTestMatrix2014), function(nam){
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2013) %in% bestRankings)
-validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 5, length(validCols))])
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
 #h2o.ai
 #Start h2o from command line
@@ -542,8 +587,8 @@ sampleSubmission$pred <- c(NCAA2011RFPrediction,
 
 sampleSubmission$pred <- 1 / (1 + 10 ^ (-(sampleSubmission$pred)/15))
 
-write.csv(sampleSubmission, file = "RFXII.csv", row.names = FALSE)
-system('zip RFXII.zip RFXII.csv')
+write.csv(sampleSubmission, file = "RFXIV.csv", row.names = FALSE)
+system('zip RFXIV.zip RFXIV.csv')
 
 #Evaluate the models against the known results--------------------------
 #Season 2011
@@ -570,15 +615,11 @@ season11Idx <- tourneyCompact$season == 2014
 
 
 #MARCH MACHINE LEARNING 2015------------------------
-#Read New Data
+#Append Rankings New Data to Old Data
 masseyOrdinals2015 <- fread(file.path(dataDirectory, "massey_ordinals_2015_prelim.csv"))
-seeds2015 <- fread(file.path(dataDirectory, "tourney_seeds_2015_prelim.csv"))
-
-#Append to Old Data
 MasseyOrdinals <- rbind(MasseyOrdinals, masseyOrdinals2015)
-tourneySeeds <- rbind(tourneySeeds, seeds2015)
 
-#Write .csv
+#Read the 2015 test matches .csv
 sampleSubmission <- fread(file.path(dataDirectory, "sample_submission_2015_prelim_all50pct.csv"))
 
 #Training Data 2003 - 2014
@@ -613,7 +654,7 @@ validColTest <- sapply(names(teamsTestMatrix2015), function(nam){
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2014) %in% bestRankings)
-validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 5, length(validCols))])
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
 #h2o.ai
 #Start h2o from command line
