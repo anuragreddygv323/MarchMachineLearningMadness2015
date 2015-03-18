@@ -1,5 +1,5 @@
 #March Machine Learning Madness
-#Ver 0.11 #bugs fixed
+#Ver 0.12 #New data included +  best features included
 
 #Init-----------------------------------------------
 rm(list=ls(all=TRUE))
@@ -30,17 +30,20 @@ tourneyDetailed <- fread(file.path(dataDirectory, "tourney_detailed_results.csv"
 tourneySeeds <- fread(file.path(dataDirectory, "tourney_seeds.csv"))
 tourneySlots <- fread(file.path(dataDirectory, "tourney_slots.csv"))
 #Append 2015 data
-seasonCompact2015 <- fread(file.path(dataDirectory, "regular_season_compact_results_2015_prelim.csv"))
-seasonDetailed2015 <- fread(file.path(dataDirectory, "regular_season_detailed_results_2015_prelim.csv"))
-seeds2015 <- fread(file.path(dataDirectory, "tourney_seeds_2015_prelim.csv"))
+seasonCompact2015 <- fread(file.path(dataDirectory, "regular_season_compact_results_2015.csv"))
+seasonDetailed2015 <- fread(file.path(dataDirectory, "regular_season_detailed_results_2015.csv"))
+seeds2015 <- fread(file.path(dataDirectory, "tourney_seeds_2015.csv"))
 seasonCompact <- rbind(seasonCompact, seasonCompact2015)
 seasonDetailed <- rbind(seasonDetailed, seasonDetailed2015)
 tourneySeeds <- rbind(tourneySeeds, seeds2015)
 
-
+#Tourney Locations' Data
+tourneyCities <- fread(file.path(dataDirectory, "seasons_with_location_001.csv"))
+teamsCoordinates <- fread(file.path(dataDirectory, "team_conf_and_geog.csv"))
+venuesCoordinates <- fread(file.path(dataDirectory, "hosts.csv"))
+  
 #Extra Data
 MasseyOrdinals <- fread(file.path(dataDirectory, "massey_ordinals.csv"))
-tourneyVenues <- fread(file.path(dataDirectory, "seasons_with_locations.csv"))
 
 #Write .csv
 sampleSubmission <- fread(file.path(dataDirectory, "sample_submission.csv"))
@@ -267,13 +270,13 @@ for (i in seq(9, 42)){
 validRankings <- intersect(seq(9, 42), which(validColTrain == 0))
 linearBestModels <- regsubsets(x = as.matrix(teamsShuffledMatrix2014[, validRankings]),
                                y = as.numeric(teamsShuffledMatrix2014[, ncol(teamsShuffledMatrix2014)]), 
-                               method = "backward")
+                               method = "forward")
 
 #Plot the best number of predictors
 bestMods <- summary(linearBestModels)
 bestNumberOfPredictors <- which.min(bestMods$cp)
 plot(bestMods$cp, xlab="Number of Variables", ylab="CP Error", main ="Best Number of Rankings")
-points(bestNumberOfPredictors, bestMods$cp[bestNumberOfPredictors],pch=20,col="red")
+points(bestNumberOfPredictors, bestMods$cp[bestNumberOfPredictors], pch=20, col="red")
 
 #Name of the most predictive rankings
 predictors1 <- as.data.frame(bestMods$which)
@@ -315,7 +318,7 @@ validColTest <- sapply(names(teamsTestMatrix2011), function(nam){
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2010) %in% bestRankings)
-validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
+validCols <- c(validCols[seq(1, 2)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
 #h2o.ai
 #Start h2o from command line
@@ -327,9 +330,9 @@ h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
 
 #Load Data to h2o
 #h2o.ai Train
-h2oTrain2011 <- as.h2o(h2oServer, signif(teamsShuffledMatrix2010[, c(validCols, ncol(teamsShuffledMatrix2010))], digits = 6))
+h2oTrain2011 <- as.h2o(h2oServer, teamsShuffledMatrix2010[, c(validCols, ncol(teamsShuffledMatrix2010))])
 #h2o.ai Test
-h2oTest2011 <- as.h2o(h2oServer, signif(teamsTestMatrix2011[, validCols], digits = 6))
+h2oTest2011 <- as.h2o(h2oServer, teamsTestMatrix2011[, validCols])
 #Remove Data
 rm(teamsShuffledMatrix2010, teamsTestMatrix2011)
 
@@ -388,7 +391,7 @@ validColTest <- sapply(names(teamsTestMatrix2012), function(nam){
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2011) %in% bestRankings)
-validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
+validCols <- c(validCols[seq(1, 2)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
 #h2o.ai
 #Start h2o from command line
@@ -400,9 +403,9 @@ h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
 
 #Load Data to h2o
 #h2o.ai Train
-h2oTrain2012 <- as.h2o(h2oServer, signif(teamsShuffledMatrix2011[, c(validCols, ncol(teamsShuffledMatrix2011))], digits = 6))
+h2oTrain2012 <- as.h2o(h2oServer, teamsShuffledMatrix2011[, c(validCols, ncol(teamsShuffledMatrix2011))])
 #h2o.ai Test
-h2oTest2012 <- as.h2o(h2oServer, signif(teamsTestMatrix2012[, validCols], digits = 6))
+h2oTest2012 <- as.h2o(h2oServer, teamsTestMatrix2012[, validCols])
 #Remove Data
 rm(teamsShuffledMatrix2011, teamsTestMatrix2012)
 
@@ -461,7 +464,7 @@ validColTest <- sapply(names(teamsTestMatrix2013), function(nam){
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2012) %in% bestRankings)
-validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
+validCols <- c(validCols[seq(1, 2)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
 #h2o.ai
 #Start h2o from command line
@@ -473,9 +476,9 @@ h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
 
 #Load Data to h2o
 #h2o.ai Train
-h2oTrain2013 <- as.h2o(h2oServer, signif(teamsShuffledMatrix2012[, c(validCols, ncol(teamsShuffledMatrix2012))], digits = 6))
+h2oTrain2013 <- as.h2o(h2oServer, teamsShuffledMatrix2012[, c(validCols, ncol(teamsShuffledMatrix2012))])
 #h2o.ai Test
-h2oTest2013 <- as.h2o(h2oServer, signif(teamsTestMatrix2013[, validCols], digits = 6))
+h2oTest2013 <- as.h2o(h2oServer, teamsTestMatrix2013[, validCols])
 #Remove Data
 rm(teamsShuffledMatrix2012, teamsTestMatrix2013)
 
@@ -534,7 +537,7 @@ validColTest <- sapply(names(teamsTestMatrix2014), function(nam){
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2013) %in% bestRankings)
-validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
+validCols <- c(validCols[seq(1, 2)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
 #h2o.ai
 #Start h2o from command line
@@ -546,9 +549,9 @@ h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
 
 #Load Data to h2o
 #h2o.ai Train
-h2oTrain2014 <- as.h2o(h2oServer, signif(teamsShuffledMatrix2013[, c(validCols, ncol(teamsShuffledMatrix2013))], digits = 6))
+h2oTrain2014 <- as.h2o(h2oServer, teamsShuffledMatrix2013[, c(validCols, ncol(teamsShuffledMatrix2013))])
 #h2o.ai Test
-h2oTest2014 <- as.h2o(h2oServer, signif(teamsTestMatrix2014[, validCols], digits = 6))
+h2oTest2014 <- as.h2o(h2oServer, teamsTestMatrix2014[, validCols])
 #Remove Data
 rm(teamsShuffledMatrix2013, teamsTestMatrix2014)
 
@@ -584,8 +587,8 @@ sampleSubmission$pred <- c(NCAA2011RFPrediction,
 
 sampleSubmission$pred <- 1 / (1 + 10 ^ (-(sampleSubmission$pred)/15))
 
-write.csv(sampleSubmission, file = "RFXV.csv", row.names = FALSE)
-system('zip RFXV.zip RFXV.csv')
+write.csv(sampleSubmission, file = "RFXVI.csv", row.names = FALSE)
+system('zip RFXVI.zip RFXVI.csv')
 
 #Evaluate the models against the known results--------------------------
 #Season 2011
@@ -613,11 +616,11 @@ season11Idx <- tourneyCompact$season == 2014
 
 #MARCH MACHINE LEARNING 2015------------------------
 #Append Rankings New Data to Old Data
-masseyOrdinals2015 <- fread(file.path(dataDirectory, "massey_ordinals_2015_prelim.csv"))
+masseyOrdinals2015 <- fread(file.path(dataDirectory, "massey_ordinals_2015_Tuesday_54systems.csv"))
 MasseyOrdinals <- rbind(MasseyOrdinals, masseyOrdinals2015)
 
 #Read the 2015 test matches .csv
-sampleSubmission <- fread(file.path(dataDirectory, "sample_submission_2015_prelim_all50pct.csv"))
+sampleSubmission <- fread(file.path(dataDirectory, "sample_submission_2015.csv"))
 
 #Training Data 2003 - 2014
 #Set up training parameters
@@ -663,9 +666,9 @@ h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
 
 #Load Data to h2o
 #h2o.ai Train
-h2oTrain2015 <- as.h2o(h2oServer, signif(teamsShuffledMatrix2014[, c(validCols, ncol(teamsShuffledMatrix2014))], digits = 6))
+h2oTrain2015 <- as.h2o(h2oServer, teamsShuffledMatrix2014[, c(validCols, ncol(teamsShuffledMatrix2014))])
 #h2o.ai Test
-h2oTest2015 <- as.h2o(h2oServer, signif(teamsTestMatrix2015[, validCols], digits = 6))
+h2oTest2015 <- as.h2o(h2oServer, teamsTestMatrix2015[, validCols])
 #Remove Data
 rm(teamsShuffledMatrix2014, teamsTestMatrix2015)
 
@@ -698,6 +701,13 @@ sampleSubmission$pred <- NCAA2015RFPrediction
 
 sampleSubmission$pred <- 1 / (1 + 10 ^ (-(sampleSubmission$pred)/15))
 
-write.csv(sampleSubmission, file = "GLM2015I.csv", row.names = FALSE)
-system('zip GLM2015I.zip GLM2015I.csv')
+write.csv(sampleSubmission, file = "GLM2015VII.csv", row.names = FALSE)
+system('zip GLM2015VII.zip GLM2015VII.csv')
 
+##Steal this submission data ensemble
+#Read steal this submission file
+submissionStolen <- fread(file.path(dataDirectory, "kaggle_submission_public.csv"))
+
+sampleSubmission$pred <- rowMeans(cbind(sampleSubmission$pred, submissionStolen$pred))
+write.csv(sampleSubmission, file = "GLM2015VIII.csv", row.names = FALSE)
+system('zip GLM2015VIII.zip GLM2015VIII.csv')
