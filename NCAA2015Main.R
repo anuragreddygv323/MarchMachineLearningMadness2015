@@ -1,21 +1,26 @@
 #March Machine Learning Madness
-#Ver 0.12 #New data included +  best features included
+#Ver 0.13 #h2o upgrade underway
 
-#Init-----------------------------------------------
+#Init & Directories------------------------------------------
 rm(list=ls(all=TRUE))
 
-#Libraries, directories, options and extra functions----------------------
+#Libraries
+require("rjson")
 require("parallel")
 require("data.table")
 require("h2o")
 require("leaps")
 
+#Read Settings file
+directories <- fromJSON(file = "SETTINGS.json")
+
 #Set Working Directory
-workingDirectory <- "/home/wacax/Wacax/Kaggle/March-Machine-Learning-Madness-2015/"
+workingDirectory <- directories$workingDirectory
 setwd(workingDirectory)
-dataDirectory <- "/home/wacax/Wacax/Kaggle/March-Machine-Learning-Madness-2015/Data/"
+dataDirectory <- directories$dataDirectory
+edaDirectory <- directories$EDALoc
 #h2o location
-h2o.jarLoc <- "/home/wacax/R/x86_64-pc-linux-gnu-library/3.1/h2o/java/h2o.jar"
+h2o.jarLoc <- directories$h2o.jarLoc
 
 #Detect available cores
 numCores <- detectCores()
@@ -320,45 +325,45 @@ validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2010) %in% bestRankings)
 validCols <- c(validCols[seq(1, 2)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
-#h2o.ai
-#Start h2o from command line
-system(paste0("java -Xmx5G -jar ", h2o.jarLoc, " -port 54333 -name NCAA2015 &"))
-#Small pause
-Sys.sleep(3)
-#Connect R to h2o
-h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
-
-#Load Data to h2o
-#h2o.ai Train
-h2oTrain2011 <- as.h2o(h2oServer, teamsShuffledMatrix2010[, c(validCols, ncol(teamsShuffledMatrix2010))])
-#h2o.ai Test
-h2oTest2011 <- as.h2o(h2oServer, teamsTestMatrix2011[, validCols])
-#Remove Data
-rm(teamsShuffledMatrix2010, teamsTestMatrix2011)
-
-#h2o.ai Cross Validation
-NCAA2011RFModelCV <- h2o.glm(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol(h2oTrain2011),
-                             data = h2oTrain2011,
-                             nfolds = 5,
-                             family = "gaussian", 
-                             alpha = c(0, 1),
-                             lambda_search = TRUE,
-                             nlambda = 100)
-
-print(paste0("There is an error of: ", NCAA2011RFModelCV@model[[1]]@model$deviance))
-
-#Model Training
-NCAA2011RFModel <- h2o.glm(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol(h2oTrain2011),
-                           data = h2oTrain2011,
-                           family = "gaussian", 
-                           alpha = NCAA2011RFModelCV@model[[1]]@model$params$alpha,
-                           lambda = NCAA2011RFModelCV@model[[1]]@model$params$lambda)
-
-#probability Predictions on all 2011 NCAA Games
-NCAA2011RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2011RFModel, newdata = h2oTest2011)), digits = 8)[, 1]
-
-#Shutdown h20 instance
-h2o.shutdown(h2oServer, prompt = FALSE)
+#TODO: h2o is fucked beyond repair, no CV and cannot train like before, replace this code with glmnet
+# #h2o.ai
+# #Start h2o from command line
+# system(paste0("java -Xmx5G -jar ", h2o.jarLoc, " -port 54333 -name NCAA2015 &"))
+# #Small pause
+# Sys.sleep(5)
+# #Connect R to h2o
+# h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
+# 
+# #Load Data to h2o
+# #h2o.ai Train
+# h2oTrain2011 <- as.h2o(h2oServer, teamsShuffledMatrix2010[, c(validCols, ncol(teamsShuffledMatrix2010))])
+# #h2o.ai Test
+# h2oTest2011 <- as.h2o(h2oServer, teamsTestMatrix2011[, validCols])
+# #Remove Data
+# rm(teamsShuffledMatrix2010, teamsTestMatrix2011)
+# 
+# #h2o.ai Cross Validation
+# NCAA2011RFModelCV <- h2o.startGLMJob(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol(h2oTrain2011),
+#                              training_frame = h2oTrain2011,
+#                              family = "gaussian", 
+#                              alpha = 0,
+#                              lambda_search = TRUE,
+#                              nlambdas = 100)
+# 
+# print(paste0("There is an error of: ", NCAA2011RFModelCV@model[[1]]@model$deviance))
+# 
+# #Model Training
+# NCAA2011RFModel <- h2o.glm(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol(h2oTrain2011),
+#                            training_frame = h2oTrain2011,
+#                            family = "gaussian", 
+#                            alpha = NCAA2011RFModelCV@model[[1]]@model$params$alpha,
+#                            lambda = NCAA2011RFModelCV@model[[1]]@model$params$lambda)
+# 
+# #probability Predictions on all 2011 NCAA Games
+# NCAA2011RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2011RFModel, newdata = h2oTest2011)), digits = 8)[, 1]
+# 
+# #Shutdown h20 instance
+# h2o.shutdown(h2oServer, prompt = FALSE)
 
 #EDA 2; 2012 Season
 #Training Data 2003 - 2011

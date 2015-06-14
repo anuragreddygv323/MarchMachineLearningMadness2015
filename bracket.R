@@ -2,7 +2,7 @@
 #Submission is set as Jeff's sample submission. 
 #Change this to your submission file.
 ###############################################################
-submission<-read.csv("GLM2015VIII.csv")
+submission<-read.csv("GLM2015VII.csv")
 
 teams<-as.data.frame(teams)
 
