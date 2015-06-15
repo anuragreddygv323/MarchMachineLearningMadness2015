@@ -3,10 +3,7 @@ Predict the 2015 NCAA Basketball Tournament, hosted on Kaggle http://www.kaggle.
 
 -NCAA2015Main.R contains all the important analyses, modeling and predictions. Please refer to this script for the imporant parts. 
 
-WARNING:  As of May 2015 this code contains important parts that have been deprecated. This code was developed using an older version of h2o which is not currenly supported. Since this code will be reused for other applications it will be updated shortly to use h2o v.3 that is currently supported.
-
-So for a more accurate prediction and supported prediction API please check this document
-https://github.com/h2oai/h2o-3/blob/master/h2o-docs/src/product/upgrade/Migration.md
+UPDATE: The original code made use of h2o machine learning library, however as of may 2015 a new version of h2o became available, unfortunately the new h2o has not yet native cross validation and it's very difficult to do it on caret so the library was replaced by glmnet. The code will go back to using h2o if the results by h2o are superior and when native cross validation becomes available again.
 
 ![Imgur](http://i.imgur.com/jISWGOn.png)
 
