@@ -1,5 +1,5 @@
 #March Machine Learning Madness
-#Ver 0.13 #h2o upgrade underway
+#Ver 0.14 #h2o replaced by glment
 
 #Init & Directories------------------------------------------
 rm(list=ls(all=TRUE))
@@ -8,6 +8,8 @@ rm(list=ls(all=TRUE))
 require("rjson")
 require("parallel")
 require("data.table")
+require("doParallel")
+require("glmnet")
 require("h2o")
 require("leaps")
 
@@ -325,45 +327,74 @@ validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2010) %in% bestRankings)
 validCols <- c(validCols[seq(1, 2)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
-#TODO: h2o is fucked beyond repair, no CV and cannot train like before, replace this code with glmnet
-# #h2o.ai
-# #Start h2o from command line
-# system(paste0("java -Xmx5G -jar ", h2o.jarLoc, " -port 54333 -name NCAA2015 &"))
-# #Small pause
-# Sys.sleep(5)
-# #Connect R to h2o
-# h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
-# 
-# #Load Data to h2o
-# #h2o.ai Train
-# h2oTrain2011 <- as.h2o(h2oServer, teamsShuffledMatrix2010[, c(validCols, ncol(teamsShuffledMatrix2010))])
-# #h2o.ai Test
-# h2oTest2011 <- as.h2o(h2oServer, teamsTestMatrix2011[, validCols])
-# #Remove Data
-# rm(teamsShuffledMatrix2010, teamsTestMatrix2011)
-# 
-# #h2o.ai Cross Validation
-# NCAA2011RFModelCV <- h2o.startGLMJob(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol(h2oTrain2011),
-#                              training_frame = h2oTrain2011,
-#                              family = "gaussian", 
-#                              alpha = 0,
-#                              lambda_search = TRUE,
-#                              nlambdas = 100)
-# 
-# print(paste0("There is an error of: ", NCAA2011RFModelCV@model[[1]]@model$deviance))
-# 
-# #Model Training
-# NCAA2011RFModel <- h2o.glm(x = seq(3, ncol(h2oTrain2011) - 1), y = ncol(h2oTrain2011),
-#                            training_frame = h2oTrain2011,
-#                            family = "gaussian", 
-#                            alpha = NCAA2011RFModelCV@model[[1]]@model$params$alpha,
-#                            lambda = NCAA2011RFModelCV@model[[1]]@model$params$lambda)
-# 
-# #probability Predictions on all 2011 NCAA Games
-# NCAA2011RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2011RFModel, newdata = h2oTest2011)), digits = 8)[, 1]
-# 
-# #Shutdown h20 instance
-# h2o.shutdown(h2oServer, prompt = FALSE)
+#GLMNET
+registerDoParallel(numCores)
+
+trainMatrix <- as.matrix(teamsShuffledMatrix2010[, c(validCols, ncol(teamsShuffledMatrix2010))])
+class(trainMatrix) <- "numeric"
+testMatrix <- as.matrix(teamsTestMatrix2011[, validCols])
+class(testMatrix) <- "numeric"
+
+#Elastic Net alpha values validation
+alphaValues2Test <- c(0, 1)
+numberOfRepeatedModels <- 5
+
+holdoutMSEScores <- sapply(alphaValues2Test, function(alphaValue){
+  cvErrors <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber){    
+    
+    #Set seed for sampling
+    set.seed(1001000 + modelNumber)
+    #Shuffle indexes
+    randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
+    
+    #10 fold CV with glmnet
+    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
+                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+                               nfolds = 5, parallel = TRUE, family = "gaussian",
+                               alpha = alphaValue)
+    
+    plot(GLMNETModelCV)
+    cvError <- GLMNETModelCV$cvm[which(GLMNETModelCV$lambda == GLMNETModelCV$lambda.min)]
+    
+    print(paste0("MSE score of : ", cvError, " with an alpha value of: ", alphaValue))
+    
+    #Clear out memory
+    rm(GLMNETModelCV)
+    
+    return(cvError)
+  })
+  
+  return(c(mean(cvErrors), alphaValue))
+})
+
+#Alpha plot
+holdoutMSEScores <- as.data.frame(t(holdoutMSEScores))
+names(holdoutMSEScores) <- c("MSEcv", "Alpha")
+ggplot(data = holdoutMSEScores, aes(x = Alpha, y = MSEcv)) + geom_line()
+
+#Best Alpha
+bestAlpha <- holdoutMSEScores[which.min(holdoutMSEScores$MSEcv), 2]
+
+#TODO: h2o is not easy to work with right now, this code will be reimplemented in h2o if h2o is mpre accurate than glmnet and when automatic cross validation becomes available again
+#Cross Validation
+#Set seed for sampling
+set.seed(1001000)
+#Shuffle indexes  
+randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
+
+#10 fold CV with glmnet
+NCAA2011RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
+                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+                               nfolds = 5, parallel = TRUE, family = "gaussian",
+                               alpha = bestAlpha)
+
+plot(NCAA2011RFModelCV)
+cvError <- NCAA2011RFModelCV$cvm[which(NCAA2011RFModelCV$lambda == NCAA2011RFModelCV$lambda.min)]  
+
+NCAA2011RFPrediction <- signif(predict(NCAA2011RFModelCV, newx =  testMatrix, s = "lambda.min"), digits = 6)
+
+print(paste0("MSE score of : ", cvError, " with an alpha value of: ", bestAlpha,
+             " and a lambda value of: ", NCAA2011RFModelCV$lambda.min))
 
 #EDA 2; 2012 Season
 #Training Data 2003 - 2011
@@ -398,45 +429,74 @@ validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2011) %in% bestRankings)
 validCols <- c(validCols[seq(1, 2)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
-#h2o.ai
-#Start h2o from command line
-system(paste0("java -Xmx5G -jar ", h2o.jarLoc, " -port 54333 -name NCAA2015 &"))
-#Small pause
-Sys.sleep(3)
-#Connect R to h2o
-h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
+#GLMNET
+registerDoParallel(numCores)
 
-#Load Data to h2o
-#h2o.ai Train
-h2oTrain2012 <- as.h2o(h2oServer, teamsShuffledMatrix2011[, c(validCols, ncol(teamsShuffledMatrix2011))])
-#h2o.ai Test
-h2oTest2012 <- as.h2o(h2oServer, teamsTestMatrix2012[, validCols])
-#Remove Data
-rm(teamsShuffledMatrix2011, teamsTestMatrix2012)
+trainMatrix <- as.matrix(teamsShuffledMatrix2011[, c(validCols, ncol(teamsShuffledMatrix2011))])
+class(trainMatrix) <- "numeric"
+testMatrix <- as.matrix(teamsTestMatrix2012[, validCols])
+class(testMatrix) <- "numeric"
 
-#h2o.ai Cross Validation
-NCAA2012RFModelCV <- h2o.glm(x = seq(3, ncol(h2oTrain2012) - 1), y = ncol(h2oTrain2012),
-                             data = h2oTrain2012,
-                             nfolds = 5,
-                             family = "gaussian", 
-                             alpha = c(0, 1),
-                             lambda_search = TRUE,
-                             nlambda = 100)
+#Elastic Net alpha values validation
+alphaValues2Test <- c(0, 1)
+numberOfRepeatedModels <- 5
 
-print(paste0("There is an error of: ", NCAA2012RFModelCV@model[[1]]@model$deviance))
+holdoutMSEScores <- sapply(alphaValues2Test, function(alphaValue){
+  cvErrors <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber){    
+    
+    #Set seed for sampling
+    set.seed(1001000 + modelNumber)
+    #Shuffle indexes
+    randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
+    
+    #10 fold CV with glmnet
+    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
+                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+                               nfolds = 5, parallel = TRUE, family = "gaussian",
+                               alpha = alphaValue)
+    
+    plot(GLMNETModelCV)
+    cvError <- GLMNETModelCV$cvm[which(GLMNETModelCV$lambda == GLMNETModelCV$lambda.min)]
+    
+    print(paste0("MSE score of : ", cvError, " with an alpha value of: ", alphaValue))
+    
+    #Clear out memory
+    rm(GLMNETModelCV)
+    
+    return(cvError)
+  })
+  
+  return(c(mean(cvErrors), alphaValue))
+})
 
-#Model Training
-NCAA2012RFModel <- h2o.glm(x = seq(3, ncol(h2oTrain2012) - 1), y = ncol(h2oTrain2012),
-                           data = h2oTrain2012,
-                           family = "gaussian", 
-                           alpha = NCAA2011RFModelCV@model[[1]]@model$params$alpha,
-                           lambda = NCAA2011RFModelCV@model[[1]]@model$params$lambda)
+#Alpha plot
+holdoutMSEScores <- as.data.frame(t(holdoutMSEScores))
+names(holdoutMSEScores) <- c("MSEcv", "Alpha")
+ggplot(data = holdoutMSEScores, aes(x = Alpha, y = MSEcv)) + geom_line()
 
-#probability Predictions on all 2012 NCAA Games
-NCAA2012RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2012RFModel, newdata = h2oTest2012)), digits = 8)[, 1]
+#Best Alpha
+bestAlpha <- holdoutMSEScores[which.min(holdoutMSEScores$MSEcv), 2]
 
-#Shutdown h20 instance
-h2o.shutdown(h2oServer, prompt = FALSE)
+#TODO: h2o is not easy to work with right now, this code will be reimplemented in h2o if h2o is mpre accurate than glmnet and when automatic cross validation becomes available again
+#Cross Validation
+#Set seed for sampling
+set.seed(1001000)
+#Shuffle indexes  
+randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
+
+#10 fold CV with glmnet
+NCAA2012RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
+                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+                               nfolds = 5, parallel = TRUE, family = "gaussian",
+                               alpha = bestAlpha)
+
+plot(NCAA2012RFModelCV)
+cvError <- NCAA2012RFModelCV$cvm[which(NCAA2012RFModelCV$lambda == NCAA2012RFModelCV$lambda.min)]  
+
+NCAA2012RFPrediction <- signif(predict(NCAA2012RFModelCV, newx =  testMatrix, s = "lambda.min"), digits = 6)
+
+print(paste0("MSE score of : ", cvError, " with an alpha value of: ", bestAlpha,
+             " and a lambda value of: ", NCAA2012RFModelCV$lambda.min))
 
 #EDA 3; 2013 Season
 #Training Data 2003 - 2012
@@ -471,45 +531,74 @@ validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2012) %in% bestRankings)
 validCols <- c(validCols[seq(1, 2)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
-#h2o.ai
-#Start h2o from command line
-system(paste0("java -Xmx5G -jar ", h2o.jarLoc, " -port 54333 -name NCAA2015 &"))
-#Small pause
-Sys.sleep(3)
-#Connect R to h2o
-h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
+#GLMNET
+registerDoParallel(numCores)
 
-#Load Data to h2o
-#h2o.ai Train
-h2oTrain2013 <- as.h2o(h2oServer, teamsShuffledMatrix2012[, c(validCols, ncol(teamsShuffledMatrix2012))])
-#h2o.ai Test
-h2oTest2013 <- as.h2o(h2oServer, teamsTestMatrix2013[, validCols])
-#Remove Data
-rm(teamsShuffledMatrix2012, teamsTestMatrix2013)
+trainMatrix <- as.matrix(teamsShuffledMatrix2012[, c(validCols, ncol(teamsShuffledMatrix2012))])
+class(trainMatrix) <- "numeric"
+testMatrix <- as.matrix(teamsTestMatrix2013[, validCols])
+class(testMatrix) <- "numeric"
 
-#h2o.ai Cross Validation
-NCAA2013RFModelCV <- h2o.glm(x = seq(3, ncol(h2oTrain2013) - 1), y = ncol(h2oTrain2013),
-                             data = h2oTrain2013,
-                             nfolds = 5,
-                             family = "gaussian", 
-                             alpha = c(0, 1),
-                             lambda_search = TRUE,
-                             nlambda = 100)
+#Elastic Net alpha values validation
+alphaValues2Test <- c(0, 1)
+numberOfRepeatedModels <- 5
 
-print(paste0("There is an error of: ", NCAA2013RFModelCV@model[[1]]@model$deviance))
+holdoutMSEScores <- sapply(alphaValues2Test, function(alphaValue){
+  cvErrors <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber){    
+    
+    #Set seed for sampling
+    set.seed(1001000 + modelNumber)
+    #Shuffle indexes
+    randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
+    
+    #10 fold CV with glmnet
+    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
+                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+                               nfolds = 5, parallel = TRUE, family = "gaussian",
+                               alpha = alphaValue)
+    
+    plot(GLMNETModelCV)
+    cvError <- GLMNETModelCV$cvm[which(GLMNETModelCV$lambda == GLMNETModelCV$lambda.min)]
+    
+    print(paste0("MSE score of : ", cvError, " with an alpha value of: ", alphaValue))
+    
+    #Clear out memory
+    rm(GLMNETModelCV)
+    
+    return(cvError)
+  })
+  
+  return(c(mean(cvErrors), alphaValue))
+})
 
-#Model Training
-NCAA2013RFModel <- h2o.glm(x = seq(3, ncol(h2oTrain2013) - 1), y = ncol(h2oTrain2013),
-                           data = h2oTrain2013,
-                           family = "gaussian", 
-                           alpha = NCAA2011RFModelCV@model[[1]]@model$params$alpha,
-                           lambda = NCAA2011RFModelCV@model[[1]]@model$params$lambda)
+#Alpha plot
+holdoutMSEScores <- as.data.frame(t(holdoutMSEScores))
+names(holdoutMSEScores) <- c("MSEcv", "Alpha")
+ggplot(data = holdoutMSEScores, aes(x = Alpha, y = MSEcv)) + geom_line()
 
-#probability Predictions on all 2013 NCAA Games
-NCAA2013RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2013RFModel, newdata = h2oTest2013)), digits = 8)[, 1]
+#Best Alpha
+bestAlpha <- holdoutMSEScores[which.min(holdoutMSEScores$MSEcv), 2]
 
-#Shutdown h20 instance
-h2o.shutdown(h2oServer, prompt = FALSE)
+#TODO: h2o is not easy to work with right now, this code will be reimplemented in h2o if h2o is mpre accurate than glmnet and when automatic cross validation becomes available again
+#Cross Validation
+#Set seed for sampling
+set.seed(1001000)
+#Shuffle indexes  
+randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
+
+#10 fold CV with glmnet
+NCAA2013RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
+                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+                               nfolds = 5, parallel = TRUE, family = "gaussian",
+                               alpha = bestAlpha)
+
+plot(NCAA2013RFModelCV)
+cvError <- NCAA2013RFModelCV$cvm[which(NCAA2013RFModelCV$lambda == NCAA2013RFModelCV$lambda.min)]  
+
+NCAA2013RFPrediction <- signif(predict(NCAA2013RFModelCV, newx =  testMatrix, s = "lambda.min"), digits = 6)
+
+print(paste0("MSE score of : ", cvError, " with an alpha value of: ", bestAlpha,
+             " and a lambda value of: ", NCAA2013RFModelCV$lambda.min))
 
 #EDA 4; 2014 Season
 #Training Data 2003 - 2013
@@ -544,45 +633,74 @@ validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2013) %in% bestRankings)
 validCols <- c(validCols[seq(1, 2)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
-#h2o.ai
-#Start h2o from command line
-system(paste0("java -Xmx5G -jar ", h2o.jarLoc, " -port 54333 -name NCAA2015 &"))
-#Small pause
-Sys.sleep(3)
-#Connect R to h2o
-h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
+#GLMNET
+registerDoParallel(numCores)
 
-#Load Data to h2o
-#h2o.ai Train
-h2oTrain2014 <- as.h2o(h2oServer, teamsShuffledMatrix2013[, c(validCols, ncol(teamsShuffledMatrix2013))])
-#h2o.ai Test
-h2oTest2014 <- as.h2o(h2oServer, teamsTestMatrix2014[, validCols])
-#Remove Data
-rm(teamsShuffledMatrix2013, teamsTestMatrix2014)
+trainMatrix <- as.matrix(teamsShuffledMatrix2013[, c(validCols, ncol(teamsShuffledMatrix2013))])
+class(trainMatrix) <- "numeric"
+testMatrix <- as.matrix(teamsTestMatrix2014[, validCols])
+class(testMatrix) <- "numeric"
 
-#h2o.ai Cross Validation
-NCAA2014RFModelCV <- h2o.glm(x = seq(3, ncol(h2oTrain2014) - 1), y = ncol(h2oTrain2014),
-                             data = h2oTrain2014,
-                             nfolds = 5,
-                             family = "gaussian", 
-                             alpha = c(0, 1),
-                             lambda_search = TRUE,
-                             nlambda = 100)
+#Elastic Net alpha values validation
+alphaValues2Test <- c(0, 1)
+numberOfRepeatedModels <- 5
 
-print(paste0("There is an error of: ", NCAA2014RFModelCV@model[[1]]@model$deviance))
+holdoutMSEScores <- sapply(alphaValues2Test, function(alphaValue){
+  cvErrors <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber){    
+    
+    #Set seed for sampling
+    set.seed(1001000 + modelNumber)
+    #Shuffle indexes
+    randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
+    
+    #10 fold CV with glmnet
+    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
+                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+                               nfolds = 5, parallel = TRUE, family = "gaussian",
+                               alpha = alphaValue)
+    
+    plot(GLMNETModelCV)
+    cvError <- GLMNETModelCV$cvm[which(GLMNETModelCV$lambda == GLMNETModelCV$lambda.min)]
+    
+    print(paste0("MSE score of : ", cvError, " with an alpha value of: ", alphaValue))
+    
+    #Clear out memory
+    rm(GLMNETModelCV)
+    
+    return(cvError)
+  })
+  
+  return(c(mean(cvErrors), alphaValue))
+})
 
-#Model Training
-NCAA2014RFModel <- h2o.glm(x = seq(3, ncol(h2oTrain2014) - 1), y = ncol(h2oTrain2014),
-                           data = h2oTrain2014,
-                           family = "gaussian", 
-                           alpha = NCAA2011RFModelCV@model[[1]]@model$params$alpha,
-                           lambda = NCAA2011RFModelCV@model[[1]]@model$params$lambda)
+#Alpha plot
+holdoutMSEScores <- as.data.frame(t(holdoutMSEScores))
+names(holdoutMSEScores) <- c("MSEcv", "Alpha")
+ggplot(data = holdoutMSEScores, aes(x = Alpha, y = MSEcv)) + geom_line()
 
-#probability Predictions on all 2014 NCAA Games
-NCAA2014RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2014RFModel, newdata = h2oTest2014)), digits = 8)[, 1]
+#Best Alpha
+bestAlpha <- holdoutMSEScores[which.min(holdoutMSEScores$MSEcv), 2]
 
-#Shutdown h20 instance
-h2o.shutdown(h2oServer, prompt = FALSE)
+#TODO: h2o is not easy to work with right now, this code will be reimplemented in h2o if h2o is mpre accurate than glmnet and when automatic cross validation becomes available again
+#Cross Validation
+#Set seed for sampling
+set.seed(1001000)
+#Shuffle indexes  
+randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
+
+#10 fold CV with glmnet
+NCAA2014RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
+                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+                               nfolds = 5, parallel = TRUE, family = "gaussian",
+                               alpha = bestAlpha)
+
+plot(NCAA2014RFModelCV)
+cvError <- NCAA2014RFModelCV$cvm[which(NCAA2014RFModelCV$lambda == NCAA2014RFModelCV$lambda.min)]  
+
+NCAA2014RFPrediction <- signif(predict(NCAA2014RFModelCV, newx =  testMatrix, s = "lambda.min"), digits = 6)
+
+print(paste0("MSE score of : ", cvError, " with an alpha value of: ", bestAlpha,
+             " and a lambda value of: ", NCAA2014RFModelCV$lambda.min))
 
 #Make a Kaggle Submission file with the predictions
 sampleSubmission$pred <- c(NCAA2011RFPrediction, 
@@ -596,28 +714,6 @@ write.csv(sampleSubmission, file = "RFXVI.csv", row.names = FALSE)
 system('zip RFXVI.zip RFXVI.csv')
 
 #Evaluate the models against the known results--------------------------
-#Season 2011
-seasonDate <- 2011
-season2011Indexes <- which(substr(sampleSubmission$id, 1, 4) == seasonDate)
-teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2011Indexes])
-teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
-
-derp <- sapply(1:length(tourneyCompact$wteam[tourneyCompact$season == seasonDate]), function(matchIdx){
-  predictionIdx <- union(which(teams1 %in% tourneyCompact$wteam[tourneyCompact$season == seasonDate][matchIdx] &
-                                 teams2 %in% tourneyCompact$lteam[tourneyCompact$season == seasonDate][matchIdx]),
-                         which(teams2 %in% tourneyCompact$wteam[tourneyCompact$season == seasonDate][matchIdx] &
-                                 teams1 %in% tourneyCompact$lteam[tourneyCompact$season == seasonDate][matchIdx]))  
-  return(predictionIdx)
-})
-
-
-#Season 2012
-season11Idx <- tourneyCompact$season == 2012
-#Season 2013
-season11Idx <- tourneyCompact$season == 2013
-#Season 2014
-season11Idx <- tourneyCompact$season == 2014
-
 
 #MARCH MACHINE LEARNING 2015------------------------
 #Append Rankings New Data to Old Data
@@ -661,45 +757,74 @@ validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2014) %in% bestRankings)
 validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
-#h2o.ai
-#Start h2o from command line
-system(paste0("java -Xmx5G -jar ", h2o.jarLoc, " -port 54333 -name NCAA2015 &"))
-#Small pause
-Sys.sleep(3)
-#Connect R to h2o
-h2oServer <- h2o.init(ip = "localhost", port = 54333, nthreads = -1)
+#GLMNET
+registerDoParallel(numCores)
 
-#Load Data to h2o
-#h2o.ai Train
-h2oTrain2015 <- as.h2o(h2oServer, teamsShuffledMatrix2014[, c(validCols, ncol(teamsShuffledMatrix2014))])
-#h2o.ai Test
-h2oTest2015 <- as.h2o(h2oServer, teamsTestMatrix2015[, validCols])
-#Remove Data
-rm(teamsShuffledMatrix2014, teamsTestMatrix2015)
+trainMatrix <- as.matrix(teamsShuffledMatrix2014[, c(validCols, ncol(teamsShuffledMatrix2014))])
+class(trainMatrix) <- "numeric"
+testMatrix <- as.matrix(teamsTestMatrix2015[, validCols])
+class(testMatrix) <- "numeric"
 
-#h2o.ai Cross Validation
-NCAA2015RFModelCV <- h2o.glm(x = seq(3, ncol(h2oTrain2015) - 1), y = ncol(h2oTrain2015),
-                             data = h2oTrain2015,
-                             nfolds = 5,
-                             family = "gaussian", 
-                             alpha = c(0, 1),
-                             lambda_search = TRUE,
-                             nlambda = 100)
+#Elastic Net alpha values validation
+alphaValues2Test <- c(0, 1)
+numberOfRepeatedModels <- 5
 
-print(paste0("There is an error of: ", NCAA2015RFModelCV@model[[1]]@model$deviance))
+holdoutMSEScores <- sapply(alphaValues2Test, function(alphaValue){
+  cvErrors <- sapply(seq(1, numberOfRepeatedModels), function(modelNumber){    
+    
+    #Set seed for sampling
+    set.seed(1001000 + modelNumber)
+    #Shuffle indexes
+    randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
+    
+    #10 fold CV with glmnet
+    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
+                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+                               nfolds = 5, parallel = TRUE, family = "gaussian",
+                               alpha = alphaValue)
+    
+    plot(GLMNETModelCV)
+    cvError <- GLMNETModelCV$cvm[which(GLMNETModelCV$lambda == GLMNETModelCV$lambda.min)]
+    
+    print(paste0("MSE score of : ", cvError, " with an alpha value of: ", alphaValue))
+    
+    #Clear out memory
+    rm(GLMNETModelCV)
+    
+    return(cvError)
+  })
+  
+  return(c(mean(cvErrors), alphaValue))
+})
 
-#Model Training
-NCAA2015RFModel <- h2o.glm(x = seq(3, ncol(h2oTrain2015) - 1), y = ncol(h2oTrain2015),
-                           data = h2oTrain2015,
-                           family = "gaussian", 
-                           alpha = NCAA2015RFModelCV@model[[1]]@model$params$alpha,
-                           lambda = NCAA2015RFModelCV@model[[1]]@model$params$lambda)
+#Alpha plot
+holdoutMSEScores <- as.data.frame(t(holdoutMSEScores))
+names(holdoutMSEScores) <- c("MSEcv", "Alpha")
+ggplot(data = holdoutMSEScores, aes(x = Alpha, y = MSEcv)) + geom_line()
 
-#probability Predictions on all 2014 NCAA Games
-NCAA2015RFPrediction <- signif(as.data.frame(h2o.predict(NCAA2015RFModel, newdata = h2oTest2015)), digits = 8)[, 1]
+#Best Alpha
+bestAlpha <- holdoutMSEScores[which.min(holdoutMSEScores$MSEcv), 2]
 
-#Shutdown h20 instance
-h2o.shutdown(h2oServer, prompt = FALSE)
+#TODO: h2o is not easy to work with right now, this code will be reimplemented in h2o if h2o is mpre accurate than glmnet and when automatic cross validation becomes available again
+#Cross Validation
+#Set seed for sampling
+set.seed(1001000)
+#Shuffle indexes  
+randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
+
+#10 fold CV with glmnet
+NCAA2015RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
+                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+                               nfolds = 5, parallel = TRUE, family = "gaussian",
+                               alpha = bestAlpha)
+
+plot(NCAA2015RFModelCV)
+cvError <- NCAA2015RFModelCV$cvm[which(NCAA2015RFModelCV$lambda == NCAA2015RFModelCV$lambda.min)]  
+
+NCAA2015RFPrediction <- signif(predict(NCAA2015RFModelCV, newx =  testMatrix, s = "lambda.min"), digits = 6)
+
+print(paste0("MSE score of : ", cvError, " with an alpha value of: ", bestAlpha,
+             " and a lambda value of: ", NCAA2015RFModelCV$lambda.min))
 
 #Make a Kaggle Submission file with the predictions
 sampleSubmission$pred <- NCAA2015RFPrediction
