@@ -1,5 +1,5 @@
 #March Machine Learning Madness
-#Ver 0.14 #h2o replaced by glment
+#Ver 0.15 #More efficient generation of training matrices + function separated in scripts
 
 #Init & Directories------------------------------------------
 rm(list=ls(all=TRUE))
@@ -10,8 +10,8 @@ require("parallel")
 require("data.table")
 require("doParallel")
 require("glmnet")
-require("h2o")
 require("leaps")
+require("ggplot2")
 
 #Read Settings file
 directories <- fromJSON(file = "SETTINGS.json")
@@ -26,6 +26,11 @@ h2o.jarLoc <- directories$h2o.jarLoc
 
 #Detect available cores
 numCores <- detectCores()
+
+#Define helper mining functions
+source(file.path(workingDirectory, "getSeedDivision.R"))
+source(file.path(workingDirectory, "getScoreAndWins.R"))
+source(file.path(workingDirectory, "getForAndAgainstPoints.R"))
 
 #Load Data----------------------
 seasonCompact <- fread(file.path(dataDirectory, "regular_season_compact_results.csv"))
@@ -99,48 +104,10 @@ pointsSeasonList <- lapply(allSeasons, function(marchSeason){
 names(pointsSeasonList) <- allSeasons
 
 #Data Mining (Functions)------------------------
-#Seed & Division 
-getSeedDivision <- function(seasonFromData, teamFromData, trimmedSouce = TRUE){
-  #Reduce the search space 
-  if (trimmedSouce == TRUE){
-    #Only data from 2003
-    seedsSource <- tourneySeeds[1155:nrow(tourneySeeds)]
-  }else{
-    #Full Data (from 1985)
-    seedsSource <- tourneySeeds
-  }
-  seedIndex <- which(seedsSource$season == seasonFromData & seedsSource$team == teamFromData)
-  seed <- seedsSource$seed[seedIndex]
-  seedTeam <- gsub(pattern = "[A-Z+a-z]", replacement = "", x = seed)
-  divisionTeam <- gsub(pattern = "[0-9]", replacement = "", x = seed)
-  #clean the extra letters
-  divisionTeam <- gsub(pattern = "[a-z]", replacement = "", x = divisionTeam)  
-  
-  return(c(seedTeam, divisionTeam))
-}
-
-#get Team's average score and winning percentage
-getScoreAndWins <- function(seasonMatch, teamMatch){
-  table <- averagePointsList[[as.character(seasonMatch)]]
-  if (sum(table[, 1] == teamMatch) > 0){
-    scoreAndWins <- table[table[, 1] == teamMatch, c(2, 3)]
-  }else{
-    scoreAndWins <- c(0, 0)
-  }  
-  return(scoreAndWins)
-}
-
-#get Team's average for and against points during regular season
-getForAndAgainstPoints <- function(seasonMatch, teamMatch){
-  table <- pointsSeasonList[[as.character(seasonMatch)]]
-  forAndAgainstPoints <- table[table[, 1] == teamMatch, c(2, 3)]  
-  return(forAndAgainstPoints)
-}
-
 #Obtain Massey Rankings
 rankingsColNames <- unique(MasseyOrdinals$sys_name)
 getExtraRankings <- function(seasonMatch, teamMatch){
-  masseyData <- MasseyOrdinals[MasseyOrdinals$team == teamMatch & MasseyOrdinals$season == seasonMatch] #it only takes 0.19s
+  masseyData <- MasseyOrdinals[MasseyOrdinals$team == teamMatch & MasseyOrdinals$season == seasonMatch] #it only takes 0.19s, better than SQL
   rankingSys <- match(masseyData$sys_name, rankingsColNames)
   extraRankingsTeam <- sapply(1:130, function(rankColNum){
     IdxSys <- which(rankingSys == rankColNum)
@@ -182,9 +149,7 @@ makeTrainTable <- function(gamesIdx, shufIdxs, returnPointspread = TRUE){
     shuffledTeams <- c(tourneyCompact$wteam[gamesIdx], tourneyCompact$lteam[gamesIdx], 
                        wTeamSeed, lTeamSeed, seedBasedBenchmark,
                        (wPowerSeeds - lPowerSeeds),
-                       #1 / (1 + 10 ^ (-(wPowerSeeds - lPowerSeeds)/15)),
                        (wTeamPowerRatings - lTeamPowerRatings), mean((wTeamPowerRatings - lTeamPowerRatings), na.rm = TRUE),
-                       #1 / (1 + 10 ^ (-(wTeamPowerRatings - lTeamPowerRatings)/15)),
                        wTeamScoreAndWins - lTeamScoreAndWins,
                        wTeamScoreAndWins2Years - lTeamScoreAndWins2Years,
                        wTeamScoreAndWins3Years - lTeamScoreAndWins3Years,
@@ -197,9 +162,7 @@ makeTrainTable <- function(gamesIdx, shufIdxs, returnPointspread = TRUE){
     shuffledTeams <- c(tourneyCompact$lteam[gamesIdx], tourneyCompact$wteam[gamesIdx], 
                        lTeamSeed, wTeamSeed, seedBasedBenchmark,
                        (lPowerSeeds - wPowerSeeds),
-                       #1 / (1 + 10 ^ (-(lPowerSeeds - wPowerSeeds)/15)),
                        (lTeamPowerRatings - wTeamPowerRatings),  mean((lTeamPowerRatings - wTeamPowerRatings), na.rm = TRUE),
-                       #1 / (1 + 10 ^ (-(lTeamPowerRatings - wTeamPowerRatings)/15)),
                        lTeamScoreAndWins - wTeamScoreAndWins,
                        lTeamScoreAndWins2Years - wTeamScoreAndWins2Years,
                        lTeamScoreAndWins3Years - wTeamScoreAndWins3Years,
@@ -241,9 +204,7 @@ makeTestTable <- function(testIdx, team1Vector, team2Vector, season){
   matchTeams <- c(team1Vector[testIdx], team2Vector[testIdx], 
                   team1Seed, team2Seed, seedBasedBenchmark, 
                   (team1PowerSeeds - team2PowerSeeds),
-                  #1 / (1 + 10 ^ (-(team1PowerSeeds - team2PowerSeeds)/15)),                  
                   (team1PowerRatings - team2PowerRatings), mean((team1PowerRatings - team2PowerRatings), na.rm = TRUE),
-                  #1 / (1 + 10 ^ (-(team1PowerRatings - team2PowerRatings)/15)),
                   team1ScoreAndWins - team2ScoreAndWins, 
                   team1ScoreAndWins2Years - team2ScoreAndWins2Years, 
                   team1ScoreAndWins3Years - team2ScoreAndWins3Years, 
@@ -252,26 +213,34 @@ makeTestTable <- function(testIdx, team1Vector, team2Vector, season){
   return(matchTeams)
 }
 
-#Select Best Rankings to Predict with--------------------------
-#EDA 0.5; 2014 Season
-#Training Data 2003 - 2013
+#Build the full training data.frame (2003-2015)
+#Training Data 2003 - 2015
 first2003Idx <- min(which(tourneyCompact$season == 2003)) 
 seasonDate <- 2015
+set.seed(1001010)
 positionShuffles <- rbinom(nrow(tourneyCompact), 1, 0.5)
-
 lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
+
 teamsGamesUnlisted <- unlist(mclapply(seq(first2003Idx, lastIdx), makeTrainTable, mc.cores = numCores,
                                       shufIdxs = positionShuffles))
-teamsShuffledMatrix2014 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
+teamsShuffledMatrixFull <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
                                          stringsAsFactors = FALSE)
 
-validColTrain <- sapply(names(teamsShuffledMatrix2014)[-length(names(teamsShuffledMatrix2014))], function(nam){
-  return(sum(is.na(teamsShuffledMatrix2014[, nam])))
+validColTrain <- sapply(names(teamsShuffledMatrixFull)[-length(names(teamsShuffledMatrixFull))], function(nam){
+  return(sum(is.na(teamsShuffledMatrixFull[, nam])))
 })
 
 for (i in seq(9, 42)){
-  teamsShuffledMatrix2014[, i] <- as.numeric(teamsShuffledMatrix2014[, i])
+  teamsShuffledMatrixFull[, i] <- as.numeric(teamsShuffledMatrixFull[, i])
 }
+
+#Select Best Rankings to Predict with--------------------------
+#EDA 0.5; 2014 Season
+first2003Idx <- min(which(tourneyCompact$season == 2003)) 
+lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
+
+#Slice the training dataframe
+teamsShuffledMatrix2014 <- teamsShuffledMatrixFull[1:(lastIdx - first2003Idx + 1), ]
 
 #Linear Model Selection for Rankings
 validRankings <- intersect(seq(9, 42), which(validColTrain == 0))
@@ -290,25 +259,19 @@ predictors1 <- as.data.frame(bestMods$which)
 bestRankings <- names(sort(apply(predictors1[, -1], 2, sum), decreasing = TRUE)[1:bestNumberOfPredictors])
 
 #EDA Algorithms-------------------------------    
-#Set up training parameters
-first2003Idx <- min(which(tourneyCompact$season == 2003)) 
-positionShuffles <- rbinom(nrow(tourneyCompact), 1, 0.5)
-
 #EDA 1; 2011 Season
 #Training Data 2003 - 2010
+first2003Idx <- min(which(tourneyCompact$season == 2003)) 
 seasonDate <- 2011
 lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
-teamsGamesUnlisted <- unlist(mclapply(seq(first2003Idx, lastIdx), makeTrainTable, mc.cores = numCores,
-                                      shufIdxs = positionShuffles))
-teamsShuffledMatrix2010 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
-                                         stringsAsFactors = FALSE)
+
+teamsShuffledMatrix2010 <- teamsShuffledMatrixFull[1:(lastIdx - first2003Idx + 1), ]
 
 validColTrain <- sapply(names(teamsShuffledMatrix2010)[-length(names(teamsShuffledMatrix2010))], function(nam){
   return(sum(is.na(teamsShuffledMatrix2010[, nam])))
 })
 
 #Test Data; 2011 Season
-seasonDate <- 2011
 season2011Indexes <- which(substr(sampleSubmission$id, 1, 4) == seasonDate)
 teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2011Indexes])
 teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
@@ -325,15 +288,24 @@ validColTest <- sapply(names(teamsTestMatrix2011), function(nam){
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2010) %in% bestRankings)
-validCols <- c(validCols[seq(1, 2)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
 #GLMNET
 registerDoParallel(numCores)
 
-trainMatrix <- as.matrix(teamsShuffledMatrix2010[, c(validCols, ncol(teamsShuffledMatrix2010))])
-class(trainMatrix) <- "numeric"
-testMatrix <- as.matrix(teamsTestMatrix2011[, validCols])
-class(testMatrix) <- "numeric"
+pointSpreadsTrain <- as.numeric(teamsShuffledMatrix2010[, ncol(teamsShuffledMatrix2010)])
+dataFrameData <- rbind(teamsShuffledMatrix2010[, validCols], 
+                       teamsTestMatrix2011[, validCols])
+
+for (i in c(1, 2, 3, 5, seq(7, ncol(dataFrameData)))){
+  dataFrameData[, i] <- as.numeric(dataFrameData[, i])
+}
+
+#transform train Dataframe to model matrix as glmnet only accepts matrices as input
+trainTestMatrix <- model.matrix(~ . , data = dataFrameData)
+
+trainMatrix <- trainTestMatrix[1:nrow(teamsShuffledMatrix2010), ]
+testMatrix <- trainTestMatrix[(nrow(teamsShuffledMatrix2010) + 1):nrow(trainTestMatrix), ]
 
 #Elastic Net alpha values validation
 alphaValues2Test <- c(0, 1)
@@ -348,8 +320,8 @@ holdoutMSEScores <- sapply(alphaValues2Test, function(alphaValue){
     randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
     
     #10 fold CV with glmnet
-    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
-                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, ], 
+                               y = pointSpreadsTrain[randomIndexOrder], 
                                nfolds = 5, parallel = TRUE, family = "gaussian",
                                alpha = alphaValue)
     
@@ -383,8 +355,8 @@ set.seed(1001000)
 randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
 
 #10 fold CV with glmnet
-NCAA2011RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
-                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+NCAA2011RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, ], 
+                               y = pointSpreadsTrain[randomIndexOrder], 
                                nfolds = 5, parallel = TRUE, family = "gaussian",
                                alpha = bestAlpha)
 
@@ -397,23 +369,21 @@ print(paste0("MSE score of : ", cvError, " with an alpha value of: ", bestAlpha,
              " and a lambda value of: ", NCAA2011RFModelCV$lambda.min))
 
 #EDA 2; 2012 Season
-#Training Data 2003 - 2011
+#Training Data 2003 - 2012
+first2003Idx <- min(which(tourneyCompact$season == 2003)) 
 seasonDate <- 2012
 lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
-teamsGamesUnlisted <- unlist(mclapply(seq(first2003Idx, lastIdx), makeTrainTable, mc.cores = numCores,
-                                      shufIdxs = positionShuffles))
-teamsShuffledMatrix2011 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
-                                         stringsAsFactors = FALSE)
+
+teamsShuffledMatrix2011 <- teamsShuffledMatrixFull[1:(lastIdx - first2003Idx + 1), ]
 
 validColTrain <- sapply(names(teamsShuffledMatrix2011)[-length(names(teamsShuffledMatrix2011))], function(nam){
   return(sum(is.na(teamsShuffledMatrix2011[, nam])))
 })
 
 #Test Data; 2012 Season
-seasonDate <- 2012
-season2011Indexes <- which(substr(sampleSubmission$id, 1, 4) == seasonDate)
-teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2011Indexes])
-teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
+season2012Indexes <- which(substr(sampleSubmission$id, 1, 4) == seasonDate)
+teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2012Indexes])
+teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2012Indexes])
 
 teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
                                           team1Vector = teams1, team2Vector = teams2,
@@ -427,15 +397,24 @@ validColTest <- sapply(names(teamsTestMatrix2012), function(nam){
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2011) %in% bestRankings)
-validCols <- c(validCols[seq(1, 2)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
 #GLMNET
 registerDoParallel(numCores)
 
-trainMatrix <- as.matrix(teamsShuffledMatrix2011[, c(validCols, ncol(teamsShuffledMatrix2011))])
-class(trainMatrix) <- "numeric"
-testMatrix <- as.matrix(teamsTestMatrix2012[, validCols])
-class(testMatrix) <- "numeric"
+pointSpreadsTrain <- as.numeric(teamsShuffledMatrix2011[, ncol(teamsShuffledMatrix2011)])
+dataFrameData <- rbind(teamsShuffledMatrix2011[, validCols], 
+                       teamsTestMatrix2012[, validCols])
+
+for (i in c(1, 2, 3, 5, seq(7, ncol(dataFrameData)))){
+  dataFrameData[, i] <- as.numeric(dataFrameData[, i])
+}
+
+#transform train Dataframe to model matrix as glmnet only accepts matrices as input
+trainTestMatrix <- model.matrix(~ . , data = dataFrameData)
+
+trainMatrix <- trainTestMatrix[1:nrow(teamsShuffledMatrix2011), ]
+testMatrix <- trainTestMatrix[(nrow(teamsShuffledMatrix2011) + 1):nrow(trainTestMatrix), ]
 
 #Elastic Net alpha values validation
 alphaValues2Test <- c(0, 1)
@@ -450,8 +429,8 @@ holdoutMSEScores <- sapply(alphaValues2Test, function(alphaValue){
     randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
     
     #10 fold CV with glmnet
-    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
-                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, ], 
+                               y = pointSpreadsTrain[randomIndexOrder], 
                                nfolds = 5, parallel = TRUE, family = "gaussian",
                                alpha = alphaValue)
     
@@ -485,8 +464,8 @@ set.seed(1001000)
 randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
 
 #10 fold CV with glmnet
-NCAA2012RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
-                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+NCAA2012RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, ], 
+                               y = pointSpreadsTrain[randomIndexOrder], 
                                nfolds = 5, parallel = TRUE, family = "gaussian",
                                alpha = bestAlpha)
 
@@ -499,23 +478,21 @@ print(paste0("MSE score of : ", cvError, " with an alpha value of: ", bestAlpha,
              " and a lambda value of: ", NCAA2012RFModelCV$lambda.min))
 
 #EDA 3; 2013 Season
-#Training Data 2003 - 2012
+#Training Data 2003 - 2013
+first2003Idx <- min(which(tourneyCompact$season == 2003)) 
 seasonDate <- 2013
 lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
-teamsGamesUnlisted <- unlist(mclapply(seq(first2003Idx, lastIdx), makeTrainTable, mc.cores = numCores,
-                                      shufIdxs = positionShuffles))
-teamsShuffledMatrix2012 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
-                                         stringsAsFactors = FALSE)
+
+teamsShuffledMatrix2012 <- teamsShuffledMatrixFull[1:(lastIdx - first2003Idx + 1), ]
 
 validColTrain <- sapply(names(teamsShuffledMatrix2012)[-length(names(teamsShuffledMatrix2012))], function(nam){
   return(sum(is.na(teamsShuffledMatrix2012[, nam])))
 })
 
 #Test Data; 2013 Season
-seasonDate <- 2013
-season2011Indexes <- which(substr(sampleSubmission$id, 1, 4) == seasonDate)
-teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2011Indexes])
-teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
+season2013Indexes <- which(substr(sampleSubmission$id, 1, 4) == seasonDate)
+teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2013Indexes])
+teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2013Indexes])
 
 teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
                                           team1Vector = teams1, team2Vector = teams2,
@@ -529,15 +506,24 @@ validColTest <- sapply(names(teamsTestMatrix2013), function(nam){
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2012) %in% bestRankings)
-validCols <- c(validCols[seq(1, 2)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
 #GLMNET
 registerDoParallel(numCores)
 
-trainMatrix <- as.matrix(teamsShuffledMatrix2012[, c(validCols, ncol(teamsShuffledMatrix2012))])
-class(trainMatrix) <- "numeric"
-testMatrix <- as.matrix(teamsTestMatrix2013[, validCols])
-class(testMatrix) <- "numeric"
+pointSpreadsTrain <- as.numeric(teamsShuffledMatrix2012[, ncol(teamsShuffledMatrix2012)])
+dataFrameData <- rbind(teamsShuffledMatrix2012[, validCols], 
+                       teamsTestMatrix2013[, validCols])
+
+for (i in c(1, 2, 3, 5, seq(7, ncol(dataFrameData)))){
+  dataFrameData[, i] <- as.numeric(dataFrameData[, i])
+}
+
+#transform train Dataframe to model matrix as glmnet only accepts matrices as input
+trainTestMatrix <- model.matrix(~ . , data = dataFrameData)
+
+trainMatrix <- trainTestMatrix[1:nrow(teamsShuffledMatrix2012), ]
+testMatrix <- trainTestMatrix[(nrow(teamsShuffledMatrix2012) + 1):nrow(trainTestMatrix), ]
 
 #Elastic Net alpha values validation
 alphaValues2Test <- c(0, 1)
@@ -552,8 +538,8 @@ holdoutMSEScores <- sapply(alphaValues2Test, function(alphaValue){
     randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
     
     #10 fold CV with glmnet
-    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
-                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, ], 
+                               y = pointSpreadsTrain[randomIndexOrder], 
                                nfolds = 5, parallel = TRUE, family = "gaussian",
                                alpha = alphaValue)
     
@@ -587,8 +573,8 @@ set.seed(1001000)
 randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
 
 #10 fold CV with glmnet
-NCAA2013RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
-                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+NCAA2013RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, ], 
+                               y = pointSpreadsTrain[randomIndexOrder], 
                                nfolds = 5, parallel = TRUE, family = "gaussian",
                                alpha = bestAlpha)
 
@@ -601,23 +587,21 @@ print(paste0("MSE score of : ", cvError, " with an alpha value of: ", bestAlpha,
              " and a lambda value of: ", NCAA2013RFModelCV$lambda.min))
 
 #EDA 4; 2014 Season
-#Training Data 2003 - 2013
+#Training Data 2003 - 2014
+first2003Idx <- min(which(tourneyCompact$season == 2003)) 
 seasonDate <- 2014
 lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
-teamsGamesUnlisted <- unlist(mclapply(seq(first2003Idx, lastIdx), makeTrainTable, mc.cores = numCores,
-                                      shufIdxs = positionShuffles))
-teamsShuffledMatrix2013 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
-                                         stringsAsFactors = FALSE)
+
+teamsShuffledMatrix2013 <- teamsShuffledMatrixFull[1:(lastIdx - first2003Idx + 1), ]
 
 validColTrain <- sapply(names(teamsShuffledMatrix2013)[-length(names(teamsShuffledMatrix2013))], function(nam){
   return(sum(is.na(teamsShuffledMatrix2013[, nam])))
 })
 
-#Test Data; 2013 Season
-seasonDate <- 2014
-season2011Indexes <- which(substr(sampleSubmission$id, 1, 4) == seasonDate)
-teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2011Indexes])
-teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
+#Test Data; 2014 Season
+season2014Indexes <- which(substr(sampleSubmission$id, 1, 4) == seasonDate)
+teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2014Indexes])
+teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2014Indexes])
 
 teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
                                           team1Vector = teams1, team2Vector = teams2,
@@ -631,15 +615,24 @@ validColTest <- sapply(names(teamsTestMatrix2014), function(nam){
 
 validCols <- intersect(which(validColTrain == 0), which(validColTest == 0))
 bestRankingsIdxs <- which(names(teamsShuffledMatrix2013) %in% bestRankings)
-validCols <- c(validCols[seq(1, 2)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
+validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(validCols) - 9, length(validCols))])
 
 #GLMNET
 registerDoParallel(numCores)
 
-trainMatrix <- as.matrix(teamsShuffledMatrix2013[, c(validCols, ncol(teamsShuffledMatrix2013))])
-class(trainMatrix) <- "numeric"
-testMatrix <- as.matrix(teamsTestMatrix2014[, validCols])
-class(testMatrix) <- "numeric"
+pointSpreadsTrain <- as.numeric(teamsShuffledMatrix2013[, ncol(teamsShuffledMatrix2013)])
+dataFrameData <- rbind(teamsShuffledMatrix2013[, validCols], 
+                       teamsTestMatrix2014[, validCols])
+
+for (i in c(1, 2, 3, 5, seq(7, ncol(dataFrameData)))){
+  dataFrameData[, i] <- as.numeric(dataFrameData[, i])
+}
+
+#transform train Dataframe to model matrix as glmnet only accepts matrices as input
+trainTestMatrix <- model.matrix(~ . , data = dataFrameData)
+
+trainMatrix <- trainTestMatrix[1:nrow(teamsShuffledMatrix2013), ]
+testMatrix <- trainTestMatrix[(nrow(teamsShuffledMatrix2013) + 1):nrow(trainTestMatrix), ]
 
 #Elastic Net alpha values validation
 alphaValues2Test <- c(0, 1)
@@ -654,8 +647,8 @@ holdoutMSEScores <- sapply(alphaValues2Test, function(alphaValue){
     randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
     
     #10 fold CV with glmnet
-    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
-                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, ], 
+                               y = pointSpreadsTrain[randomIndexOrder], 
                                nfolds = 5, parallel = TRUE, family = "gaussian",
                                alpha = alphaValue)
     
@@ -689,8 +682,8 @@ set.seed(1001000)
 randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
 
 #10 fold CV with glmnet
-NCAA2014RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
-                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+NCAA2014RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, ], 
+                               y = pointSpreadsTrain[randomIndexOrder], 
                                nfolds = 5, parallel = TRUE, family = "gaussian",
                                alpha = bestAlpha)
 
@@ -716,24 +709,19 @@ system('zip RFXVI.zip RFXVI.csv')
 #Evaluate the models against the known results--------------------------
 
 #MARCH MACHINE LEARNING 2015------------------------
-#Append Rankings New Data to Old Data
+#Append Rankings to Old Ones
 masseyOrdinals2015 <- fread(file.path(dataDirectory, "massey_ordinals_2015_Tuesday_54systems.csv"))
 MasseyOrdinals <- rbind(MasseyOrdinals, masseyOrdinals2015)
 
 #Read the 2015 test matches .csv
 sampleSubmission <- fread(file.path(dataDirectory, "sample_submission_2015.csv"))
 
-#Training Data 2003 - 2014
-#Set up training parameters
+#Training Data 2003 - 2015
 first2003Idx <- min(which(tourneyCompact$season == 2003)) 
-positionShuffles <- rbinom(nrow(tourneyCompact), 1, 0.5)
-
 seasonDate <- 2015
 lastIdx <- max(which(tourneyCompact$season == seasonDate - 1)) 
-teamsGamesUnlisted <- unlist(mclapply(seq(first2003Idx, lastIdx), makeTrainTable, mc.cores = numCores,
-                                      shufIdxs = positionShuffles))
-teamsShuffledMatrix2014 <- as.data.frame(matrix(teamsGamesUnlisted, nrow = length(seq(first2003Idx, lastIdx)), byrow = TRUE), 
-                                         stringsAsFactors = FALSE)
+
+teamsShuffledMatrix2014 <- teamsShuffledMatrixFull[1:(lastIdx - first2003Idx + 1), ]
 
 validColTrain <- sapply(names(teamsShuffledMatrix2014)[-length(names(teamsShuffledMatrix2014))], function(nam){
   return(sum(is.na(teamsShuffledMatrix2014[, nam])))
@@ -760,10 +748,19 @@ validCols <- c(validCols[seq(1, 8)], bestRankingsIdxs, validCols[seq(length(vali
 #GLMNET
 registerDoParallel(numCores)
 
-trainMatrix <- as.matrix(teamsShuffledMatrix2014[, c(validCols, ncol(teamsShuffledMatrix2014))])
-class(trainMatrix) <- "numeric"
-testMatrix <- as.matrix(teamsTestMatrix2015[, validCols])
-class(testMatrix) <- "numeric"
+pointSpreadsTrain <- as.numeric(teamsShuffledMatrix2014[, ncol(teamsShuffledMatrix2014)])
+dataFrameData <- rbind(teamsShuffledMatrix2014[, validCols], 
+                       teamsTestMatrix2015[, validCols])
+
+for (i in c(1, 2, 3, 5, seq(7, ncol(dataFrameData)))){
+  dataFrameData[, i] <- as.numeric(dataFrameData[, i])
+}
+
+#transform train Dataframe to model matrix as glmnet only accepts matrices as input
+trainTestMatrix <- model.matrix(~ . , data = dataFrameData)
+
+trainMatrix <- trainTestMatrix[1:nrow(teamsShuffledMatrix2014), ]
+testMatrix <- trainTestMatrix[(nrow(teamsShuffledMatrix2014) + 1):nrow(trainTestMatrix), ]
 
 #Elastic Net alpha values validation
 alphaValues2Test <- c(0, 1)
@@ -778,8 +775,8 @@ holdoutMSEScores <- sapply(alphaValues2Test, function(alphaValue){
     randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
     
     #10 fold CV with glmnet
-    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
-                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+    GLMNETModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, ], 
+                               y = pointSpreadsTrain[randomIndexOrder], 
                                nfolds = 5, parallel = TRUE, family = "gaussian",
                                alpha = alphaValue)
     
@@ -813,15 +810,15 @@ set.seed(1001000)
 randomIndexOrder <- sample(seq(1, nrow(trainMatrix)), nrow(trainMatrix))
 
 #10 fold CV with glmnet
-NCAA2015RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, -ncol(trainMatrix)], 
-                               y = trainMatrix[randomIndexOrder, ncol(trainMatrix)], 
+NCAA2015RFModelCV <- cv.glmnet(x = trainMatrix[randomIndexOrder, ], 
+                               y = pointSpreadsTrain[randomIndexOrder], 
                                nfolds = 5, parallel = TRUE, family = "gaussian",
                                alpha = bestAlpha)
 
 plot(NCAA2015RFModelCV)
 cvError <- NCAA2015RFModelCV$cvm[which(NCAA2015RFModelCV$lambda == NCAA2015RFModelCV$lambda.min)]  
 
-NCAA2015RFPrediction <- signif(predict(NCAA2015RFModelCV, newx =  testMatrix, s = "lambda.min"), digits = 6)
+NCAA2015RFPrediction <- signif(predict(NCAA2015RFModelCV, newx = testMatrix, s = "lambda.min"), digits = 6)
 
 print(paste0("MSE score of : ", cvError, " with an alpha value of: ", bestAlpha,
              " and a lambda value of: ", NCAA2015RFModelCV$lambda.min))

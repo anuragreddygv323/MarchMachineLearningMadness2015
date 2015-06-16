@@ -1,5 +1,5 @@
-## MarchMachineLearningMadness2015
-Predict the 2015 NCAA Basketball Tournament, hosted on Kaggle http://www.kaggle.com/c/march-machine-learning-mania-2015
+## March Machine Learning Mania 2015
+Predict the 2015 NCAA Basketball Tournament, hosted on Kaggle http://www.kaggle.com/c/march-machine-learning-mania-2015. This placed 24th in this Machine Learning competition.
 
 -NCAA2015Main.R contains all the important analyses, modeling and predictions. Please refer to this script for the imporant parts. 
 
