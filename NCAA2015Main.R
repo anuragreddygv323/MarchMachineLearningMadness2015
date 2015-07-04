@@ -1,5 +1,5 @@
 #March Machine Learning Madness
-#Ver 0.15 #More efficient generation of training matrices + function separated in scripts
+#Ver 0.16 #Local Model Evaluation (LogLoss) included
 
 #Init & Directories------------------------------------------
 rm(list=ls(all=TRUE))
@@ -31,6 +31,7 @@ numCores <- detectCores()
 source(file.path(workingDirectory, "getSeedDivision.R"))
 source(file.path(workingDirectory, "getScoreAndWins.R"))
 source(file.path(workingDirectory, "getForAndAgainstPoints.R"))
+source(file.path(workingDirectory, "resultsPredictionMatrix.R"))
 
 #Load Data----------------------
 seasonCompact <- fread(file.path(dataDirectory, "regular_season_compact_results.csv"))
@@ -273,13 +274,13 @@ validColTrain <- sapply(names(teamsShuffledMatrix2010)[-length(names(teamsShuffl
 
 #Test Data; 2011 Season
 season2011Indexes <- which(substr(sampleSubmission$id, 1, 4) == seasonDate)
-teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2011Indexes])
-teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
+teams1_2011 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2011Indexes])
+teams2_2011 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2011Indexes])
 
-teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
-                                          team1Vector = teams1, team2Vector = teams2,
+teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1_2011)), makeTestTable, mc.cores = numCores,
+                                          team1Vector = teams1_2011, team2Vector = teams2_2011,
                                           season = seasonDate))
-teamsTestMatrix2011 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE), 
+teamsTestMatrix2011 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1_2011), byrow = TRUE), 
                                      stringsAsFactors = FALSE)
 
 validColTest <- sapply(names(teamsTestMatrix2011), function(nam){
@@ -382,13 +383,13 @@ validColTrain <- sapply(names(teamsShuffledMatrix2011)[-length(names(teamsShuffl
 
 #Test Data; 2012 Season
 season2012Indexes <- which(substr(sampleSubmission$id, 1, 4) == seasonDate)
-teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2012Indexes])
-teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2012Indexes])
+teams1_2012 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2012Indexes])
+teams2_2012 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2012Indexes])
 
-teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
-                                          team1Vector = teams1, team2Vector = teams2,
+teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1_2012)), makeTestTable, mc.cores = numCores,
+                                          team1Vector = teams1_2012, team2Vector = teams2_2012,
                                           season = seasonDate))
-teamsTestMatrix2012 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE), 
+teamsTestMatrix2012 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1_2012), byrow = TRUE), 
                                      stringsAsFactors = FALSE)
 
 validColTest <- sapply(names(teamsTestMatrix2012), function(nam){
@@ -491,13 +492,13 @@ validColTrain <- sapply(names(teamsShuffledMatrix2012)[-length(names(teamsShuffl
 
 #Test Data; 2013 Season
 season2013Indexes <- which(substr(sampleSubmission$id, 1, 4) == seasonDate)
-teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2013Indexes])
-teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2013Indexes])
+teams1_2013 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2013Indexes])
+teams2_2013 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2013Indexes])
 
-teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
-                                          team1Vector = teams1, team2Vector = teams2,
+teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1_2013)), makeTestTable, mc.cores = numCores,
+                                          team1Vector = teams1_2013, team2Vector = teams2_2013,
                                           season = seasonDate))
-teamsTestMatrix2013 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE), 
+teamsTestMatrix2013 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1_2013), byrow = TRUE), 
                                      stringsAsFactors = FALSE)
 
 validColTest <- sapply(names(teamsTestMatrix2013), function(nam){
@@ -600,13 +601,13 @@ validColTrain <- sapply(names(teamsShuffledMatrix2013)[-length(names(teamsShuffl
 
 #Test Data; 2014 Season
 season2014Indexes <- which(substr(sampleSubmission$id, 1, 4) == seasonDate)
-teams1 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2014Indexes])
-teams2 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2014Indexes])
+teams1_2014 <- as.numeric(substr(sampleSubmission$id, 6, 9)[season2014Indexes])
+teams2_2014 <- as.numeric(substr(sampleSubmission$id, 11, 14)[season2014Indexes])
 
-teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1)), makeTestTable, mc.cores = numCores,
-                                          team1Vector = teams1, team2Vector = teams2,
+teamsGamesTestUnlisted <- unlist(mclapply(seq(1, length(teams1_2014)), makeTestTable, mc.cores = numCores,
+                                          team1Vector = teams1_2014, team2Vector = teams2_2014,
                                           season = seasonDate))
-teamsTestMatrix2014 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1), byrow = TRUE), 
+teamsTestMatrix2014 <- as.data.frame(matrix(teamsGamesTestUnlisted, nrow = length(teams1_2014), byrow = TRUE), 
                                      stringsAsFactors = FALSE)
 
 validColTest <- sapply(names(teamsTestMatrix2014), function(nam){
@@ -707,6 +708,18 @@ write.csv(sampleSubmission, file = "RFXVI.csv", row.names = FALSE)
 system('zip RFXVI.zip RFXVI.csv')
 
 #Evaluate the models against the known results--------------------------
+predictedActual2011 <- resultsPredictionMatrix(teams1 = teams1_2011, teams2 = teams2_2011, 
+                                               year2Evaluate = 2011, yearsPrediction = NCAA2011RFPrediction)
+predictedActual2012 <- resultsPredictionMatrix(teams1 = teams1_2012, teams2 = teams2_2012, 
+                                               year2Evaluate = 2012, yearsPrediction = NCAA2012RFPrediction)
+predictedActual2013 <- resultsPredictionMatrix(teams1 = teams1_2013, teams2 = teams2_2013, 
+                                               year2Evaluate = 2013, yearsPrediction = NCAA2013RFPrediction)
+predictedActual2014 <- resultsPredictionMatrix(teams1 = teams1_2014, teams2 = teams2_2014, 
+                                               year2Evaluate = 2014, yearsPrediction = NCAA2014RFPrediction)
+
+predActual <- rbind(predictedActual2011, predictedActual2012, predictedActual2013, predictedActual2014)
+
+print(paste0("LogLoss error for all four years of: ", logLoss(predActual[, 2], predActual[, 1])))
 
 #MARCH MACHINE LEARNING 2015------------------------
 #Append Rankings to Old Ones
