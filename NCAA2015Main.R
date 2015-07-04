@@ -12,6 +12,7 @@ require("doParallel")
 require("glmnet")
 require("leaps")
 require("ggplot2")
+require("Metrics")
 
 #Read Settings file
 directories <- fromJSON(file = "SETTINGS.json")
