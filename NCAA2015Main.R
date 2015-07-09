@@ -1,5 +1,5 @@
 #March Machine Learning Madness
-#Ver 0.16 #Local Model Evaluation (LogLoss) included
+#Ver 0.17 #Efficient Local evaluation and post competition evaluation inlcuded in a single file
 
 #Init & Directories------------------------------------------
 rm(list=ls(all=TRUE))
@@ -852,3 +852,17 @@ submissionStolen <- fread(file.path(dataDirectory, "kaggle_submission_public.csv
 sampleSubmission$pred <- rowMeans(cbind(sampleSubmission$pred, submissionStolen$pred))
 write.csv(sampleSubmission, file = "GLM2015VIII.csv", row.names = FALSE)
 system('zip GLM2015VIII.zip GLM2015VIII.csv')
+
+#Post-competition evaluation of model--------------------
+#Load Updated Data
+tourneyCompact <- fread(file.path(dataDirectory, "tourney_compact_results_thru_2015.csv"))
+tourneyDetailed <- fread(file.path(dataDirectory, "tourney_detailed_results_thru_2015.csv"))
+
+predictedActual2015 <- resultsPredictionMatrix(teams1 = teams1_2015, teams2 = teams2_2015, 
+                                               year2Evaluate = 2015, yearsPrediction = NCAA2015RFPrediction)
+predictedActualEnsemble2015 <- resultsPredictionMatrix(teams1 = teams1_2015, teams2 = teams2_2015, 
+                                                       year2Evaluate = 2015, yearsPrediction = rowMeans(cbind(sampleSubmission$pred, stolenPrediction)))
+
+print(paste0("LogLoss error for the 2015 model was: ", logLoss(predictedActual2015[, 2], predictedActual2015[, 1])))
+print(paste0("LogLoss error for the 2015 ensemble model was: ", logLoss(predictedActualEnsemble2015[, 2], predictedActualEnsemble2015[, 1])))
+

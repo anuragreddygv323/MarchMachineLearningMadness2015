@@ -24,6 +24,9 @@ wget -x --load-cookies cookies.txt -P Data -nH --cut-dirs=5 https://www.kaggle.c
 wget -x --load-cookies cookies.txt -P Data -nH --cut-dirs=5 https://www.kaggle.com/c/march-machine-learning-mania-2015/download/tourney_slots_2015.csv
 wget -x --load-cookies cookies.txt -P Data -nH --cut-dirs=5 https://www.kaggle.com/c/march-machine-learning-mania-2015/download/sample_submission_2015.csv
 wget -x --load-cookies cookies.txt -P Data -nH --cut-dirs=5 https://www.kaggle.com/blobs/download/forum-message-attachment-files/2168/massey_ordinals_2015_Tuesday_54systems.csv
+#2015 Results
+wget -x --load-cookies cookies.txt -P Data -nH --cut-dirs=5 https://www.kaggle.com/blobs/download/forum-message-attachment-files/2307/tourney_compact_results_thru_2015.csv
+wget -x --load-cookies cookies.txt -P Data -nH --cut-dirs=5 https://www.kaggle.com/blobs/download/forum-message-attachment-files/2308/tourney_detailed_results_thru_2015.csv
 #Original Spellings
 wget -x --load-cookies cookies.txt -P Data -nH --cut-dirs=5 https://www.kaggle.com/blobs/download/forum-message-attachment-files/1930/team_spellings.csv
 #Additional Spellings
